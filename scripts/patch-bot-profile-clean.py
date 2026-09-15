@@ -26,7 +26,7 @@ if count != 1:
 s = s.replace(old, new, 1)
 
 old_url = '''    return f"{PUBLIC_SCHEME}://{host}{port}/sub/{row['sub_token']}"\n'''
-new_url = '''    return f"{PUBLIC_SCHEME}://{host}{port}/sub/{row['sub_token']}?rev=sni443-20260915"\n'''
+new_url = '''    return f"https://{host}/sub/{row['sub_token']}?rev=sni443-20260915"\n'''
 if s.count(old_url) != 1:
     raise SystemExit(f'profile-clean subscription revision expected 1 match, found {s.count(old_url)}')
 s = s.replace(old_url, new_url, 1)
