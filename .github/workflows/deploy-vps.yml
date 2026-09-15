@@ -18,11 +18,8 @@ concurrency:
 
 jobs:
   deploy:
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, linux, x64, ferixdi-vps]
     env:
-      VPS_HOST: 72.56.126.97
-      VPS_USER: root
-      SSHPASS: ${{ secrets.VPS_PASSWORD }}
       BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
       ADMIN_IDS: ${{ secrets.ADMIN_IDS }}
 
@@ -30,45 +27,31 @@ jobs:
       - name: Check required secrets
         shell: bash
         run: |
-          test -n "$SSHPASS" || { echo 'Missing VPS_PASSWORD secret'; exit 1; }
           test -n "$BOT_TOKEN" || { echo 'Missing BOT_TOKEN secret'; exit 1; }
 
-      - name: Install SSH client
-        run: sudo apt-get update -y && sudo apt-get install -y sshpass
-
-      - name: Store bot token on VPS without printing it
+      - name: Store secrets locally
         shell: bash
         run: |
-          printf '%s\n' "$BOT_TOKEN" | sshpass -e ssh \
-            -o StrictHostKeyChecking=no \
-            -o UserKnownHostsFile=/dev/null \
-            "$VPS_USER@$VPS_HOST" \
-            'IFS= read -r token; umask 077; mkdir -p /opt/ferixdi; touch /opt/ferixdi/.env; chmod 600 /opt/ferixdi/.env; grep -v "^BOT_TOKEN=" /opt/ferixdi/.env > /opt/ferixdi/.env.tmp || true; printf "BOT_TOKEN=%s\n" "$token" >> /opt/ferixdi/.env.tmp; mv /opt/ferixdi/.env.tmp /opt/ferixdi/.env'
-
-      - name: Store optional admin IDs
-        if: ${{ env.ADMIN_IDS != '' }}
-        shell: bash
-        run: |
-          printf '%s\n' "$ADMIN_IDS" | sshpass -e ssh \
-            -o StrictHostKeyChecking=no \
-            -o UserKnownHostsFile=/dev/null \
-            "$VPS_USER@$VPS_HOST" \
-            'IFS= read -r ids; grep -v "^ADMIN_IDS=" /opt/ferixdi/.env > /opt/ferixdi/.env.tmp || true; printf "ADMIN_IDS=%s\n" "$ids" >> /opt/ferixdi/.env.tmp; chmod 600 /opt/ferixdi/.env.tmp; mv /opt/ferixdi/.env.tmp /opt/ferixdi/.env'
+          umask 077
+          sudo mkdir -p /opt/ferixdi
+          sudo touch /opt/ferixdi/.env
+          sudo chmod 600 /opt/ferixdi/.env
+          sudo grep -v '^BOT_TOKEN=' /opt/ferixdi/.env | sudo grep -v '^ADMIN_IDS=' > /tmp/ferixdi-env || true
+          printf 'BOT_TOKEN=%s\n' "$BOT_TOKEN" >> /tmp/ferixdi-env
+          if [ -n "$ADMIN_IDS" ]; then
+            printf 'ADMIN_IDS=%s\n' "$ADMIN_IDS" >> /tmp/ferixdi-env
+          fi
+          sudo mv /tmp/ferixdi-env /opt/ferixdi/.env
+          sudo chmod 600 /opt/ferixdi/.env
 
       - name: Install or update bot
         shell: bash
         run: |
-          sshpass -e ssh \
-            -o StrictHostKeyChecking=no \
-            -o UserKnownHostsFile=/dev/null \
-            "$VPS_USER@$VPS_HOST" \
-            'curl -fsSL https://raw.githubusercontent.com/ferixdi-png/vps/main/scripts/install-bot.sh | bash'
+          curl -fsSL https://raw.githubusercontent.com/ferixdi-png/vps/main/scripts/install-bot.sh | sudo bash
 
       - name: Verify bot and VPN node
         shell: bash
         run: |
-          sshpass -e ssh \
-            -o StrictHostKeyChecking=no \
-            -o UserKnownHostsFile=/dev/null \
-            "$VPS_USER@$VPS_HOST" \
-            'systemctl is-active ferixdi-bot && docker ps --format "{{.Names}} {{.Status}}" | grep ferixdi-xray && curl -fsS http://127.0.0.1:8080/health'
+          sudo systemctl is-active ferixdi-bot
+          sudo docker ps --format '{{.Names}} {{.Status}}' | grep ferixdi-xray
+          curl -fsS http://127.0.0.1:8080/health
