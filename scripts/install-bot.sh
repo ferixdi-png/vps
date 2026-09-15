@@ -44,6 +44,7 @@ python3 "$REPO_DIR/scripts/patch-bot-admin.py" "$BOT_DIR/main.py"
 python3 "$REPO_DIR/scripts/patch-bot-trial-day.py" "$BOT_DIR/main.py"
 python3 "$REPO_DIR/scripts/patch-bot-antispam.py" "$BOT_DIR/main.py"
 python3 "$REPO_DIR/scripts/patch-bot-admin-panel.py" "$BOT_DIR/main.py"
+python3 "$REPO_DIR/scripts/patch-bot-payment-ui.py" "$BOT_DIR/main.py"
 python3 -m py_compile "$BOT_DIR/main.py"
 
 if [ ! -x "$BOT_DIR/.venv/bin/python" ]; then
