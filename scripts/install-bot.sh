@@ -5,6 +5,7 @@ REPO_DIR="/opt/ferixdi/repo"
 BOT_DIR="/opt/ferixdi/bot"
 ENV_FILE="/opt/ferixdi/.env"
 SERVICE_FILE="/etc/systemd/system/ferixdi-bot.service"
+DEPLOY_SHA="${DEPLOY_SHA:-}"
 
 export DEBIAN_FRONTEND=noninteractive
 if ! command -v git >/dev/null || ! command -v python3 >/dev/null; then
@@ -16,11 +17,19 @@ mkdir -p /opt/ferixdi/data /opt/ferixdi/backups "$BOT_DIR"
 
 if [ -d "$REPO_DIR/.git" ]; then
   git -C "$REPO_DIR" fetch --all --prune
-  git -C "$REPO_DIR" reset --hard origin/main
 else
   rm -rf "$REPO_DIR"
   git clone https://github.com/ferixdi-png/vps.git "$REPO_DIR"
 fi
+
+if [ -n "$DEPLOY_SHA" ]; then
+  git -C "$REPO_DIR" fetch origin "$DEPLOY_SHA" --depth=1 || true
+  git -C "$REPO_DIR" reset --hard "$DEPLOY_SHA"
+else
+  git -C "$REPO_DIR" reset --hard origin/main
+fi
+
+echo "Deploying commit: $(git -C "$REPO_DIR" rev-parse --short HEAD)"
 
 # Repair client-facing Reality metadata from the live Xray private key before
 # the bot starts. No private key is written outside the Xray config.
@@ -51,7 +60,6 @@ set_env() {
   rm -f "$tmp"
 }
 
-# Prefer the canonical node IP; hostname -I is a fallback only.
 PUBLIC_IP="$(awk -F= '$1=="IP" && length($2)>0 {print $2; exit}' /root/FERIXDI-NODE-INFO.txt 2>/dev/null || true)"
 if [ -z "$PUBLIC_IP" ]; then
   PUBLIC_IP="$(hostname -I | tr ' ' '\n' | grep -E '^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$' | head -1 || true)"
