@@ -7,6 +7,7 @@ on:
     paths:
       - 'bot/**'
       - 'scripts/install-bot.sh'
+      - 'scripts/patch-bot-runtime.py'
       - '.github/workflows/deploy-vps.yml'
 
 permissions:
@@ -59,13 +60,42 @@ jobs:
             if sudo systemctl is-active --quiet ferixdi-bot && curl -fsS http://127.0.0.1:8080/health; then
               echo
               echo 'FERIXDI BOT HEALTHY'
-              exit 0
+              break
             fi
             sleep 2
+            if [ "$i" = 20 ]; then
+              echo 'Health check failed. Diagnostics:'
+              sudo systemctl --no-pager --full status ferixdi-bot || true
+              sudo journalctl -u ferixdi-bot --no-pager -n 120 || true
+              sudo ss -lntp | grep -E ':(8080|443|8443|12443|13443|17443)\b' || true
+              exit 1
+            fi
           done
 
-          echo 'Health check failed. Diagnostics:'
-          sudo systemctl --no-pager --full status ferixdi-bot || true
-          sudo journalctl -u ferixdi-bot --no-pager -n 120 || true
-          sudo ss -lntp | grep -E ':(8080|443|8443|12443|13443|17443)\b' || true
-          exit 1
+          sudo python3 -m json.tool /opt/ferixdi/node/xray-config.json >/dev/null
+          sudo test -s /root/FERIXDI-NODE-INFO.txt
+          sudo grep -q '^PUBLIC_KEY=' /root/FERIXDI-NODE-INFO.txt
+          sudo grep -q '^SHORT_ID=' /root/FERIXDI-NODE-INFO.txt
+          sudo python3 - <<'PY'
+          import base64, sqlite3, urllib.request
+          db = '/opt/ferixdi/data/bot.db'
+          con = sqlite3.connect(db)
+          check = con.execute('PRAGMA quick_check').fetchone()[0]
+          assert check == 'ok', check
+          total = con.execute('SELECT COUNT(*) FROM users').fetchone()[0]
+          active = con.execute("SELECT COUNT(*) FROM users WHERE enabled=1 AND expires_at IS NOT NULL").fetchone()[0]
+          row = con.execute("SELECT sub_token FROM users WHERE enabled=1 AND expires_at IS NOT NULL ORDER BY created_at LIMIT 1").fetchone()
+          print(f'DB OK: users={total}, enabled={active}')
+          if row:
+              token = row[0]
+              raw = urllib.request.urlopen(f'http://127.0.0.1:8080/sub/{token}', timeout=5).read()
+              decoded = base64.b64decode(raw).decode()
+              profiles = [x for x in decoded.splitlines() if x.startswith('vless://')]
+              assert profiles, 'active subscription rendered no VLESS profiles'
+              print(f'SUBSCRIPTION OK: profiles={len(profiles)}')
+          else:
+              print('SUBSCRIPTION TEST SKIPPED: no enabled user')
+          PY
+
+          echo '--- recent bot errors/warnings ---'
+          sudo journalctl -u ferixdi-bot --since '15 minutes ago' --no-pager | grep -Ei 'error|exception|failed|warning' || true
