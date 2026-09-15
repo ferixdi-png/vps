@@ -1,0 +1,17 @@
+name: Check Telegram Bot Token
+
+on:
+  workflow_dispatch:
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Verify BOT_TOKEN without printing it
+        env:
+          BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
+        run: |
+          set -euo pipefail
+          test -n "$BOT_TOKEN"
+          RESPONSE="$(curl -fsS "https://api.telegram.org/bot${BOT_TOKEN}/getMe")"
+          python -c 'import json,sys; d=json.load(sys.stdin); assert d.get("ok") is True; print("BOT_TOKEN_OK:", d["result"].get("username","bot"))' <<< "$RESPONSE"
