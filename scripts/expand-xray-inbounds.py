@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
-"""Normalize the live Xray node to reachable, low-latency Reality inbounds.
+"""Normalize the live Xray node to externally reachable Reality inbounds.
 
-Only provider-exposed ports are published. The script also applies conservative
-2026 transport tuning: TCP_NODELAY/TFO/BBR socket hints, moderate XHTTP XMUX
-reuse settings, and fast direct outbound socket options. Changes are idempotent.
+Only provider-reachable ports are kept. The subscription order is optimized for
+what the user actually sees in Happ: the empirically lowest-latency endpoint is
+first, followed by throughput/stability fallbacks. Each inbound keeps two valid
+shortIds, giving ten working client profiles across five reachable ports.
 """
 from __future__ import annotations
 
@@ -17,50 +18,13 @@ from pathlib import Path
 CONFIG = Path('/opt/ferixdi/node/xray-config.json')
 CONTAINER = 'ferixdi-xray'
 KEEP_PORTS = {443, 8443, 12443, 13443, 17443}
+# Based on current Happ measurements: gRPC 17443 is far lower latency than the
+# other exposed ports, so present it first to users. The rest are ordered by use.
+PRIORITY = {17443: 0, 443: 1, 12443: 2, 13443: 3, 8443: 4}
 
 
 def run(*args: str) -> str:
     return subprocess.check_output(args, text=True).strip()
-
-
-def tune_stream(inbound: dict) -> None:
-    stream = inbound.setdefault('streamSettings', {})
-    # Safe per-socket latency/throughput hints supported by current Xray.
-    sock = stream.setdefault('sockopt', {})
-    sock['tcpFastOpen'] = True
-    sock['tcpNoDelay'] = True
-    sock['tcpcongestion'] = 'bbr'
-
-    network = stream.get('network', 'raw')
-    if network == 'xhttp':
-        x = stream.setdefault('xhttpSettings', {})
-        x.setdefault('mode', 'auto')
-        extra = x.setdefault('extra', {})
-        # Moderate reuse: fewer handshakes during bursty browsing while rotating
-        # old HTTP transports sooner than the long defaults.
-        xmux = extra.setdefault('xmux', {})
-        xmux['maxConcurrency'] = '5'
-        xmux['hMaxRequestTimes'] = '300-600'
-        xmux['hMaxReusableSecs'] = '900-1800'
-        # Do not set maxConnections together with maxConcurrency.
-        xmux.pop('maxConnections', None)
-
-
-def tune_outbounds(cfg: dict) -> None:
-    for outbound in cfg.get('outbounds', []):
-        if outbound.get('protocol') != 'freedom':
-            continue
-        stream = outbound.setdefault('streamSettings', {})
-        sock = stream.setdefault('sockopt', {})
-        sock['tcpFastOpen'] = True
-        sock['tcpNoDelay'] = True
-        sock.setdefault('domainStrategy', 'UseIP')
-        sock.setdefault('happyEyeballs', {
-            'tryDelayMs': 150,
-            'prioritizeIPv6': False,
-            'interleave': 1,
-            'maxConcurrentTry': 4,
-        })
 
 
 def main() -> None:
@@ -83,7 +47,6 @@ def main() -> None:
                 if candidate not in short_ids:
                     short_ids.append(candidate)
             reality['shortIds'] = short_ids[:2]
-        tune_stream(inbound)
         kept.append(inbound)
 
     ports = {x.get('port') for x in kept}
@@ -91,8 +54,8 @@ def main() -> None:
     if missing:
         raise RuntimeError(f'required reachable inbounds missing: {sorted(missing)}')
 
+    kept.sort(key=lambda x: PRIORITY.get(int(x.get('port', 99999)), 99))
     cfg['inbounds'] = kept
-    tune_outbounds(cfg)
 
     backup = CONFIG.with_suffix('.json.pre-normalize.bak')
     shutil.copy2(CONFIG, backup)
@@ -112,8 +75,8 @@ def main() -> None:
         raise
 
     print('Reachable Reality ports:', ','.join(map(str, sorted(KEEP_PORTS))))
+    print('Subscription priority:', ' > '.join(map(str, [17443, 443, 12443, 13443, 8443])))
     print('Removed blocked ports:', ','.join(map(str, [p for p in removed if p is not None])) or 'none')
-    print('Transport tuning: TFO=on TCP_NODELAY=on BBR=on XHTTP-XMUX=moderate')
     print('Valid client profiles expected: 10 (2 shortIds x 5 reachable ports)')
 
 
