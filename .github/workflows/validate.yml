@@ -11,7 +11,7 @@ jobs:
           python-version: "3.12"
       - name: Validate Python and shell files
         run: |
-          python -m py_compile management/api/app.py management/api/db.py bot/main.py scripts/patch-bot-runtime.py
+          python -m py_compile management/api/app.py management/api/db.py bot/main.py scripts/patch-bot-runtime.py scripts/repair-node-metadata.py
           bash -n scripts/install-bot.sh
           bash -n scripts/generate-node-keys.sh
           bash -n scripts/generate-management-secrets.sh
