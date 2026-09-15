@@ -10,5 +10,12 @@ count = s.count(old)
 if count != 1:
     raise SystemExit(f'profile-clean patch expected 1 match, found {count}')
 s = s.replace(old, new, 1)
+
+old_url = '''    return f"{PUBLIC_SCHEME}://{host}{port}/sub/{row['sub_token']}"\n'''
+new_url = '''    return f"{PUBLIC_SCHEME}://{host}{port}/sub/{row['sub_token']}?rev=12-20260915"\n'''
+if s.count(old_url) != 1:
+    raise SystemExit(f'profile-clean subscription revision expected 1 match, found {s.count(old_url)}')
+s = s.replace(old_url, new_url, 1)
+
 path.write_text(s)
 print(f'profile-clean patched {path}')
