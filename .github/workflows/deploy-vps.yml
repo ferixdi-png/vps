@@ -23,6 +23,7 @@ concurrency:
 jobs:
   deploy:
     runs-on: [self-hosted, linux, x64, ferixdi-vps]
+    timeout-minutes: 10
     env:
       BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
       ADMIN_IDS: ${{ secrets.ADMIN_IDS }}
@@ -45,23 +46,27 @@ jobs:
           sudo mkdir -p /opt/ferixdi
           sudo touch /opt/ferixdi/.env
           sudo chmod 600 /opt/ferixdi/.env
-          sudo grep -v '^BOT_TOKEN=' /opt/ferixdi/.env | sudo grep -v '^ADMIN_IDS=' > /tmp/ferixdi-env || true
-          printf 'BOT_TOKEN=%s\n' "$BOT_TOKEN" >> /tmp/ferixdi-env
+          tmp="$(mktemp)"
+          trap 'rm -f "$tmp"' EXIT
+          sudo grep -v '^BOT_TOKEN=' /opt/ferixdi/.env | grep -v '^ADMIN_IDS=' > "$tmp" || true
+          printf 'BOT_TOKEN=%s\n' "$BOT_TOKEN" >> "$tmp"
           if [ -n "$ADMIN_IDS" ]; then
-            printf 'ADMIN_IDS=%s\n' "$ADMIN_IDS" >> /tmp/ferixdi-env
+            printf 'ADMIN_IDS=%s\n' "$ADMIN_IDS" >> "$tmp"
           fi
-          sudo mv /tmp/ferixdi-env /opt/ferixdi/.env
-          sudo chmod 600 /opt/ferixdi/.env
+          sudo install -m 600 "$tmp" /opt/ferixdi/.env
 
       - name: Install or update bot
         shell: bash
         run: |
+          sudo touch /run/ferixdi-deploying
+          trap 'sudo rm -f /run/ferixdi-deploying' EXIT
           sudo env DEPLOY_SHA="$GITHUB_SHA" bash "$GITHUB_WORKSPACE/scripts/install-bot.sh"
 
       - name: Verify bot and VPN node
         shell: bash
         run: |
           set -e
+          sudo rm -f /run/ferixdi-deploying
           sudo docker ps --format '{{.Names}} {{.Status}}' | grep ferixdi-xray
           sudo systemctl is-enabled --quiet ferixdi-bot
           sudo systemctl is-enabled --quiet ferixdi-healthcheck.timer
@@ -128,6 +133,9 @@ jobs:
           PY
           audit_rc=$?
           set -e
+
+          echo '--- deep self-healing check ---'
+          sudo /usr/local/sbin/ferixdi-healthcheck
 
           echo '--- network tuning ---'
           sysctl net.core.default_qdisc net.ipv4.tcp_congestion_control || true
