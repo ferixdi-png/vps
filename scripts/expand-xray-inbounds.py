@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Expand the live Xray Reality node to ten genuinely distinct inbounds.
+"""Expand the live Xray Reality node to a wider set of real inbounds.
 
 The script is idempotent. It clones already-working Reality transports, changes
 only their listening port/tag and transport path/service name where applicable,
@@ -23,6 +23,8 @@ TARGETS = [
     (11443, 'xhttp'),
     (14443, 'xhttp'),
     (15443, 'xhttp'),
+    (16443, 'grpc'),
+    (18443, 'grpc'),
 ]
 
 
@@ -61,6 +63,10 @@ def make_clone(template: dict, port: int, network: str) -> dict:
         x['path'] = f'/fx/{port}'
         x.setdefault('mode', 'auto')
         stream.pop('grpcSettings', None)
+    elif network == 'grpc':
+        g = stream.setdefault('grpcSettings', {})
+        g['serviceName'] = f'ferixdi-{port}'
+        stream.pop('xhttpSettings', None)
     elif network == 'raw':
         stream.pop('xhttpSettings', None)
         stream.pop('grpcSettings', None)
