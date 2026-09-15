@@ -10,6 +10,7 @@ on:
       - 'scripts/patch-bot-runtime.py'
       - 'scripts/patch-bot-hardening.py'
       - 'scripts/patch-bot-edge.py'
+      - 'scripts/patch-bot-admin.py'
       - 'scripts/repair-node-metadata.py'
       - 'scripts/ferixdi-healthcheck.sh'
       - '.github/workflows/deploy-vps.yml'
@@ -115,8 +116,8 @@ jobs:
           check = con.execute('PRAGMA quick_check').fetchone()[0]
           assert check == 'ok', check
           total = con.execute('SELECT COUNT(*) FROM users').fetchone()[0]
-          active = con.execute("SELECT COUNT(*) FROM users WHERE enabled=1 AND expires_at IS NOT NULL").fetchone()[0]
-          row = con.execute("SELECT sub_token FROM users WHERE enabled=1 AND expires_at IS NOT NULL ORDER BY created_at LIMIT 1").fetchone()
+          active = con.execute("SELECT COUNT(*) FROM users WHERE enabled=1").fetchone()[0]
+          row = con.execute("SELECT sub_token FROM users WHERE enabled=1 ORDER BY created_at LIMIT 1").fetchone()
           print(f'DB OK: users={total}, enabled={active}')
           if row:
               token = row[0]
