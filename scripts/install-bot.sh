@@ -22,6 +22,10 @@ else
   git clone https://github.com/ferixdi-png/vps.git "$REPO_DIR"
 fi
 
+# Repair client-facing Reality metadata from the live Xray private key before
+# the bot starts. No private key is written outside the Xray config.
+python3 "$REPO_DIR/scripts/repair-node-metadata.py"
+
 # Preserve the virtualenv between deploys; refresh only application source.
 find "$BOT_DIR" -maxdepth 1 -type f -name '*.py' -delete
 cp -a "$REPO_DIR/bot/." "$BOT_DIR/"
@@ -47,9 +51,12 @@ set_env() {
   rm -f "$tmp"
 }
 
-PUBLIC_IP="$(hostname -I | tr ' ' '\n' | grep -E '^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$' | head -1 || true)"
-# On this Timeweb node hostname -I resolves to the public address. Keep these
-# runtime paths canonical on every deploy so stale .env values cannot break keys.
+# Prefer the canonical node IP; hostname -I is a fallback only.
+PUBLIC_IP="$(awk -F= '$1=="IP" && length($2)>0 {print $2; exit}' /root/FERIXDI-NODE-INFO.txt 2>/dev/null || true)"
+if [ -z "$PUBLIC_IP" ]; then
+  PUBLIC_IP="$(hostname -I | tr ' ' '\n' | grep -E '^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$' | head -1 || true)"
+fi
+
 set_env TRIAL_DAYS 3
 set_env SUB_PORT 8080
 set_env PUBLIC_HOST "$PUBLIC_IP"
@@ -95,8 +102,8 @@ if ! grep -q '^BOT_TOKEN=.' "$ENV_FILE"; then
   echo 'BOT_TOKEN is not present in /opt/ferixdi/.env.'
   exit 2
 fi
-if ! test -s /root/FERIXDI-NODE-INFO.txt; then
-  echo 'Node metadata file is missing.'
+if ! grep -q '^PUBLIC_KEY=.' /root/FERIXDI-NODE-INFO.txt; then
+  echo 'PUBLIC_KEY repair failed.'
   exit 3
 fi
 if ! test -s /opt/ferixdi/node/xray-config.json; then
