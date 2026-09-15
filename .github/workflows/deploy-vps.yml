@@ -15,6 +15,9 @@ on:
       - 'scripts/patch-bot-trial-day.py'
       - 'scripts/patch-bot-antispam.py'
       - 'scripts/patch-bot-admin-panel.py'
+      - 'scripts/patch-bot-payment-ui.py'
+      - 'scripts/patch-bot-referrals.py'
+      - 'scripts/patch-bot-happ-simple.py'
       - 'scripts/repair-node-metadata.py'
       - 'scripts/expand-xray-inbounds.py'
       - 'scripts/ferixdi-healthcheck.sh'
@@ -108,7 +111,9 @@ jobs:
           grep -q 'async def pay_approve' /opt/ferixdi/bot/main.py
           grep -q 'CopyTextButton' /opt/ferixdi/bot/main.py
           grep -q 'callback_data="admin_payments"' /opt/ferixdi/bot/main.py
-          echo 'TRIAL + ADMIN + MANUAL PAYMENT OK'
+          grep -q 'compact_key_for_copy' /opt/ferixdi/bot/main.py
+          grep -q 'Вставить из буфера обмена' /opt/ferixdi/bot/main.py
+          echo 'TRIAL + ADMIN + PAYMENT + HAPP COPY OK'
 
           sudo python3 -m json.tool /opt/ferixdi/node/xray-config.json >/dev/null
           sudo python3 - <<'PY'
