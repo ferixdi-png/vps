@@ -5,6 +5,23 @@ import re, sys
 path = Path(sys.argv[1] if len(sys.argv) > 1 else '/opt/ferixdi/bot/main.py')
 s = path.read_text()
 
+# Public Happ subscription is HTTPS on the VPS public 8080 socket. The bot
+# itself stays on loopback:8080 so existing health checks continue to work.
+sub_decl = 'SUB_PORT = int(os.getenv("SUB_PORT", "8080"))\n'
+if sub_decl in s and 'HTTP_PORT = 8080\n' not in s:
+    s = s.replace(sub_decl, sub_decl + 'HTTP_PORT = 8080\nPUBLIC_SUB_PORT = 8080\n', 1)
+
+old_port = '    port = "" if (PUBLIC_SCHEME == "https" and SUB_PORT == 443) else f":{SUB_PORT}"\n'
+if old_port in s:
+    s = s.replace(old_port, '    port = f":{PUBLIC_SUB_PORT}"\n', 1)
+
+old_site = 'site = web.TCPSite(runner, "0.0.0.0", SUB_PORT)'
+if old_site in s:
+    s = s.replace(old_site, 'site = web.TCPSite(runner, "127.0.0.1", HTTP_PORT)', 1)
+old_print = 'print(f"Ferixdi bot started; subscription port={SUB_PORT}", flush=True)'
+if old_print in s:
+    s = s.replace(old_print, 'print(f"Ferixdi bot started; local_http={HTTP_PORT}; public_https={PUBLIC_SUB_PORT}", flush=True)', 1)
+
 helper = '''\n\ndef subscription_copy_keyboard(url: str):\n    if len(url) > 256:\n        raise RuntimeError(f"subscription URL too long: {len(url)}")\n    return InlineKeyboardMarkup(\n        inline_keyboard=[\n            [InlineKeyboardButton(text="📋 Скопировать подписку", copy_text=CopyTextButton(text=url))],\n            [InlineKeyboardButton(text="📱 Как добавить в Happ", callback_data="help")],\n            [InlineKeyboardButton(text="💬 Поддержка", url=SUPPORT_URL)],\n        ]\n    )\n'''
 
 key_start = s.find('@dp.callback_query(F.data == "key")')
@@ -12,7 +29,6 @@ status_start = s.find('@dp.callback_query(F.data == "status")', key_start)
 if key_start < 0 or status_start < 0:
     raise SystemExit('key handler section not found')
 
-# Remove the previous single-profile helper block if it exists.
 helper_start = s.rfind('\n\ndef ', 0, key_start)
 if helper_start >= 0:
     block = s[helper_start:key_start]
