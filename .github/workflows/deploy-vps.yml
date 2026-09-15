@@ -97,6 +97,7 @@ jobs:
           cfg=json.load(open('/opt/ferixdi/node/xray-config.json'))
           expected={443,8443,12443,13443,17443}
           expected_transport={443:'grpc',8443:'grpc',17443:'grpc',12443:'xhttp',13443:'xhttp'}
+          expected_sid_counts={443:3,8443:2,17443:2,12443:3,13443:3}
           usable={}
           transports={}
           for inbound in cfg.get('inbounds', []):
@@ -108,7 +109,7 @@ jobs:
                   usable[p] = len(r.get('shortIds') or [])
                   transports[p] = s.get('network')
           assert set(usable) == expected, f'unexpected live Reality ports: {usable}'
-          assert all(v >= 2 for v in usable.values()), f'each reachable port needs two shortIds: {usable}'
+          assert usable == expected_sid_counts, f'unexpected shortId layout: {usable}'
           assert transports == expected_transport, f'unexpected transport layout: {transports}'
           print(f'XRAY ENDPOINTS OK: ports={sorted(usable)} transports={transports} shortIds={usable}')
           PY
@@ -127,15 +128,19 @@ jobs:
               ports = {urlsplit(x).port for x in profiles}
               parsed = [(urlsplit(x).port, parse_qs(urlsplit(x).query), unquote(urlsplit(x).fragment)) for x in profiles]
               sids = [q.get('sid',[''])[0] for _,q,_ in parsed]
-              assert len(profiles) == 10, f'expected 10 reachable VLESS profiles, got {len(profiles)}'
+              assert len(profiles) == 13, f'expected 13 VLESS profiles, got {len(profiles)}'
               assert ports == {443,8443,12443,13443,17443}, f'unexpected subscription ports: {sorted(ports)}'
-              assert len(set((p, sid) for (p,_,_), sid in zip(parsed, sids))) == 10, 'profiles are not unique'
+              assert len(set((p, sid) for (p,_,_), sid in zip(parsed, sids))) == 13, 'profiles are not unique'
               expected={443:'grpc',8443:'grpc',17443:'grpc',12443:'xhttp',13443:'xhttp'}
               for p,q,label in parsed:
                   assert q.get('security',[''])[0] == 'reality', f'{p}: security is not REALITY'
                   assert q.get('type',[''])[0] == expected[p], f'{p}: wrong client transport {q.get("type")}'
                   assert 'VLESS' in label and 'Reality' in label, f'{p}: unclear profile name: {label}'
-              print(f'SUBSCRIPTION OK: profiles={len(profiles)} transports=validated reachable_ports={len(ports)}')
+              labels=[label for _,_,label in parsed]
+              assert any('если режут нестандартные порты' in x for x in labels), 'missing HTTPS-443 fallback profile'
+              assert any('если режут gRPC/HTTP2' in x for x in labels), 'missing anti-gRPC XHTTP profile'
+              assert any('запасной маршрут при DPI' in x for x in labels), 'missing DPI backup profile'
+              print(f'SUBSCRIPTION OK: profiles={len(profiles)} transports=validated reachable_ports={len(ports)} fallbacks=3')
           PY
           audit_rc=$?
           set -e
