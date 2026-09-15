@@ -21,7 +21,26 @@ def active_users():
     with db() as con:
         return [r for r in con.execute("SELECT * FROM users WHERE enabled=1").fetchall() if is_active(r)]
 ''',
-'''def is_admin_row(row):
+'''def recover_admin_ids():
+    # ADMIN_IDS may be absent from GitHub Secrets while the production DB already
+    # contains the original owner. Recover the earliest bot user so admin commands
+    # never silently disappear after a deploy. An explicit ADMIN_IDS value always wins.
+    if ADMIN_IDS:
+        return
+    try:
+        with db() as con:
+            row = con.execute("SELECT telegram_id FROM users ORDER BY created_at LIMIT 1").fetchone()
+        if row:
+            ADMIN_IDS.add(int(row["telegram_id"]))
+            print(f"admin id recovered from production database: {row['telegram_id']}", flush=True)
+    except Exception as e:
+        print(f"admin id recovery warning: {type(e).__name__}: {e}", flush=True)
+
+
+recover_admin_ids()
+
+
+def is_admin_row(row):
     return bool(row and row["telegram_id"] in ADMIN_IDS)
 
 
@@ -115,7 +134,7 @@ async def reissue(c: CallbackQuery):
         await c.message.answer(f"⚠️ Перевыпуск не завершён. Старый ключ сохранён. Код: {type(e).__name__}", reply_markup=happ_keyboard())
         return
     await c.message.answer(
-        "✅ <b>Ключ полностью перевыпущен</b>\\n\\nСтарая ссылка подписки и старые VLESS-профили больше не действуют. Удали старую подписку из Happ и добавь новую через «🔑 Получить мой ключ».",
+        "✅ <b>Ключ полностью перевыпущен</b>\n\nСтарая ссылка подписки и старые VLESS-профили больше не действуют. Удали старую подписку из Happ и добавь новую через «🔑 Получить мой ключ».",
         parse_mode="HTML", reply_markup=happ_keyboard())
 
 
@@ -128,9 +147,9 @@ old_status='''    if is_active(row):
         hours = max(0, int(left.total_seconds() // 3600))
         days, rem_hours = divmod(hours, 24)
         await c.message.answer(
-            f"🟢 <b>Доступ активен</b>\\n"
-            f"Тариф: {plan_name(row)}\\n"
-            f"До: {expiry_text(row)}\\n"
+            f"🟢 <b>Доступ активен</b>\n"
+            f"Тариф: {plan_name(row)}\n"
+            f"До: {expiry_text(row)}\n"
             f"Осталось: {days} дн. {rem_hours} ч.",
             parse_mode="HTML",
             reply_markup=menu(),
@@ -139,7 +158,7 @@ old_status='''    if is_active(row):
 new_status='''    if is_active(row):
         if is_admin_row(row):
             await c.message.answer(
-                "🟢 <b>Доступ активен</b>\\nТариф: Администратор · Безлимит\\nСрок: <b>Безлимит</b>",
+                "🟢 <b>Доступ активен</b>\nТариф: Администратор · Безлимит\nСрок: <b>Безлимит</b>",
                 parse_mode="HTML", reply_markup=menu())
         else:
             exp = parse_exp(row)
@@ -147,9 +166,9 @@ new_status='''    if is_active(row):
             hours = max(0, int(left.total_seconds() // 3600))
             days, rem_hours = divmod(hours, 24)
             await c.message.answer(
-                f"🟢 <b>Доступ активен</b>\\n"
-                f"Тариф: {plan_name(row)}\\n"
-                f"До: {expiry_text(row)}\\n"
+                f"🟢 <b>Доступ активен</b>\n"
+                f"Тариф: {plan_name(row)}\n"
+                f"До: {expiry_text(row)}\n"
                 f"Осталось: {days} дн. {rem_hours} ч.",
                 parse_mode="HTML",
                 reply_markup=menu(),
