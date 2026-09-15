@@ -9,9 +9,11 @@ on:
       - 'scripts/install-bot.sh'
       - 'scripts/patch-bot-runtime.py'
       - 'scripts/patch-bot-hardening.py'
+      - 'scripts/patch-bot-profile-clean.py'
       - 'scripts/patch-bot-edge.py'
       - 'scripts/patch-bot-admin.py'
       - 'scripts/repair-node-metadata.py'
+      - 'scripts/expand-xray-inbounds.py'
       - 'scripts/ferixdi-healthcheck.sh'
       - '.github/workflows/deploy-vps.yml'
 
@@ -73,7 +75,6 @@ jobs:
           echo '--- Xray container network ---'
           sudo docker inspect -f 'NetworkMode={{.HostConfig.NetworkMode}}' ferixdi-xray
           sudo docker inspect -f 'PortBindings={{json .HostConfig.PortBindings}}' ferixdi-xray
-          sudo docker inspect -f 'Mounts={{range .Mounts}}{{.Source}}:{{.Destination}} {{end}}' ferixdi-xray
           sudo systemctl is-enabled --quiet ferixdi-bot
           sudo systemctl is-enabled --quiet ferixdi-healthcheck.timer
           sudo systemctl is-active --quiet ferixdi-healthcheck.timer
@@ -89,7 +90,7 @@ jobs:
               echo 'Health check failed. Diagnostics:'
               sudo systemctl --no-pager --full status ferixdi-bot || true
               sudo journalctl -u ferixdi-bot --no-pager -n 120 || true
-              sudo ss -lntp | grep -E ':(8080|443|8443|12443|13443|17443)\b' || true
+              sudo ss -lntp | grep -E ':(8080|443|8443|9443|10443|11443|12443|13443|14443|15443|16443|17443|18443)\b' || true
               exit 1
             fi
           done
@@ -106,15 +107,22 @@ jobs:
           import json
           p='/opt/ferixdi/node/xray-config.json'
           cfg=json.load(open(p))
+          usable=[]
           for i, inbound in enumerate(cfg.get('inbounds', []), 1):
               s=inbound.get('streamSettings', {})
               r=s.get('realitySettings', {})
-              print(f"INBOUND {i}: port={inbound.get('port')} network={s.get('network')} reality={bool(r)} privateKey={bool(r.get('privateKey'))} shortIds={len(r.get('shortIds') or [])} serverNames={len(r.get('serverNames') or [])}")
+              port=inbound.get('port')
+              print(f"INBOUND {i}: port={port} network={s.get('network')} reality={bool(r)} privateKey={bool(r.get('privateKey'))} shortIds={len(r.get('shortIds') or [])} serverNames={len(r.get('serverNames') or [])}")
+              if inbound.get('protocol','vless') == 'vless' and port and r:
+                  usable.append(int(port))
+          assert len(set(usable)) >= 10, f'expected at least 10 distinct Reality ports, got {sorted(set(usable))}'
+          print(f'XRAY DISTINCT ENDPOINTS OK: {len(set(usable))}')
           PY
 
           set +e
           sudo python3 - <<'PY'
           import base64, sqlite3, urllib.request, urllib.error
+          from urllib.parse import urlsplit
           db = '/opt/ferixdi/data/bot.db'
           con = sqlite3.connect(db)
           check = con.execute('PRAGMA quick_check').fetchone()[0]
@@ -132,8 +140,10 @@ jobs:
                   raise
               decoded = base64.b64decode(raw, validate=True).decode()
               profiles = [x for x in decoded.splitlines() if x.startswith('vless://')]
-              assert len(profiles) >= 10, f'expected >=10 VLESS fallback profiles, got {len(profiles)}'
-              print(f'SUBSCRIPTION OK: profiles={len(profiles)}')
+              ports = {urlsplit(x).port for x in profiles}
+              assert len(profiles) >= 10, f'expected >=10 VLESS profiles, got {len(profiles)}'
+              assert len(ports) >= 10, f'expected >=10 distinct profile ports, got {sorted(ports)}'
+              print(f'SUBSCRIPTION OK: profiles={len(profiles)} distinct_ports={len(ports)}')
           else:
               print('SUBSCRIPTION TEST SKIPPED: no enabled user')
           PY
