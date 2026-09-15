@@ -70,6 +70,10 @@ jobs:
           set -e
           sudo rm -f /run/ferixdi-deploying
           sudo docker ps --format '{{.Names}} {{.Status}}' | grep ferixdi-xray
+          echo '--- Xray container network ---'
+          sudo docker inspect -f 'NetworkMode={{.HostConfig.NetworkMode}}' ferixdi-xray
+          sudo docker inspect -f 'PortBindings={{json .HostConfig.PortBindings}}' ferixdi-xray
+          sudo docker inspect -f 'Mounts={{range .Mounts}}{{.Source}}:{{.Destination}} {{end}}' ferixdi-xray
           sudo systemctl is-enabled --quiet ferixdi-bot
           sudo systemctl is-enabled --quiet ferixdi-healthcheck.timer
           sudo systemctl is-active --quiet ferixdi-healthcheck.timer
