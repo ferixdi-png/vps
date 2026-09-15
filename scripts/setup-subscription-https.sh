@@ -4,6 +4,7 @@ set -euo pipefail
 HOST="${1:?usage: setup-subscription-https.sh HOST}"
 PUBLIC_IP="${HOST%.sslip.io}"
 PUBLIC_IP="${PUBLIC_IP//-/.}"
+PUBLIC_PORT=9443
 CONF="/etc/nginx/sites-available/ferixdi-subscription"
 TLS_DIR="/etc/ferixdi/tls"
 ACME="/root/.acme.sh/acme.sh"
@@ -21,8 +22,8 @@ fi
 
 mkdir -p "$TLS_DIR"
 
-# Port 80 is blocked upstream. Issue through TLS-ALPN on the already reachable
-# 443. Xray is paused only for the ACME handshake and immediately restored.
+# Port 80 is blocked upstream. Renew the certificate through TLS-ALPN on 443.
+# Xray is paused only for the ACME handshake and immediately restored.
 if [ ! -s "$TLS_DIR/fullchain.pem" ] || ! openssl x509 -checkend 1209600 -noout -in "$TLS_DIR/fullchain.pem" >/dev/null 2>&1; then
   restore_xray() {
     docker start ferixdi-xray >/dev/null 2>&1 || true
@@ -41,13 +42,11 @@ if [ ! -s "$TLS_DIR/fullchain.pem" ] || ! openssl x509 -checkend 1209600 -noout 
     --reloadcmd 'nginx -t && systemctl reload nginx'
 fi
 
-# The old bot may still own 0.0.0.0:8080. Stop it briefly, then nginx takes
-# only the public-IP socket while the new bot will bind 127.0.0.1:8080.
 systemctl stop ferixdi-bot >/dev/null 2>&1 || true
 
 cat > "$CONF" <<EOF
 server {
-    listen ${PUBLIC_IP}:8080 ssl;
+    listen ${PUBLIC_IP}:${PUBLIC_PORT} ssl;
     server_name ${HOST};
 
     ssl_certificate ${TLS_DIR}/fullchain.pem;
@@ -72,6 +71,7 @@ rm -f /etc/nginx/sites-enabled/default
 nginx -t
 systemctl enable --now nginx
 systemctl reload nginx
-ufw allow 8080/tcp || true
+ufw allow ${PUBLIC_PORT}/tcp || true
+ufw delete allow 8080/tcp >/dev/null 2>&1 || true
 
-echo "HTTPS subscription endpoint ready: https://${HOST}:8080"
+echo "HTTPS subscription endpoint ready: https://${HOST}:${PUBLIC_PORT}"
