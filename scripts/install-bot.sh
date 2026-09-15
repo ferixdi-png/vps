@@ -39,6 +39,7 @@ python3 "$REPO_DIR/scripts/repair-node-metadata.py"
 find "$BOT_DIR" -maxdepth 1 -type f -name '*.py' -delete
 cp -a "$REPO_DIR/bot/." "$BOT_DIR/"
 python3 "$REPO_DIR/scripts/patch-bot-runtime.py" "$BOT_DIR/main.py"
+python3 "$REPO_DIR/scripts/patch-bot-hardening.py" "$BOT_DIR/main.py"
 python3 -m py_compile "$BOT_DIR/main.py"
 
 if [ ! -x "$BOT_DIR/.venv/bin/python" ]; then
@@ -86,6 +87,8 @@ Description=Ferixdi VPN Telegram Bot
 After=network-online.target docker.service
 Wants=network-online.target
 Requires=docker.service
+StartLimitIntervalSec=60
+StartLimitBurst=10
 
 [Service]
 Type=simple
@@ -94,9 +97,13 @@ EnvironmentFile=/opt/ferixdi/.env
 ExecStart=/opt/ferixdi/bot/.venv/bin/python /opt/ferixdi/bot/main.py
 Restart=always
 RestartSec=2
-StartLimitIntervalSec=60
-StartLimitBurst=10
 User=root
+UMask=0077
+MemoryMax=300M
+TasksMax=128
+LimitNOFILE=4096
+TimeoutStopSec=20
+KillSignal=SIGTERM
 
 [Install]
 WantedBy=multi-user.target
@@ -117,6 +124,13 @@ fi
 if ! test -s /opt/ferixdi/node/xray-config.json; then
   echo 'Xray config is missing.'
   exit 4
+fi
+
+# A clean DB backup before every deployment makes rollback independent of the
+# six-hour in-process backup loop.
+if [ -s /opt/ferixdi/data/bot.db ]; then
+  cp -a /opt/ferixdi/data/bot.db "/opt/ferixdi/backups/predeploy-$(date -u +%Y%m%d-%H%M%S).db" || true
+  find /opt/ferixdi/backups -type f -name 'predeploy-*.db' -printf '%T@ %p\n' 2>/dev/null | sort -nr | tail -n +8 | cut -d' ' -f2- | xargs -r rm -f
 fi
 
 systemctl restart ferixdi-bot
