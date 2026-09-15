@@ -25,6 +25,7 @@ panel = r'''def admin_panel_keyboard():
             InlineKeyboardButton(text="⏳ Истекают 24ч", callback_data="adm_expiring"),
             InlineKeyboardButton(text="🎁 Trial", callback_data="adm_trials"),
         ],
+        [InlineKeyboardButton(text="💰 Заявки на оплату", callback_data="admin_payments")],
         [InlineKeyboardButton(text="🔄 Обновить", callback_data="adm_panel")],
     ])
 

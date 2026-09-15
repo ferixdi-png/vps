@@ -536,13 +536,6 @@ async def pay_sent(c: CallbackQuery):
     await c.answer("Заявка отправлена")
 
 
-@dp.message(Command("admin"))
-async def admin_panel(m: Message):
-    if m.from_user.id not in ADMIN_IDS:
-        return
-    await m.answer("🛠 <b>Админ-панель Ferixdi</b>", parse_mode="HTML", reply_markup=admin_keyboard())
-
-
 @dp.callback_query(F.data == "admin_stats")
 async def admin_stats(c: CallbackQuery):
     if c.from_user.id not in ADMIN_IDS:
