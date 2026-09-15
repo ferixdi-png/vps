@@ -37,6 +37,7 @@ find "$BOT_DIR" -maxdepth 1 -type f -name '*.py' -delete
 cp -a "$REPO_DIR/bot/." "$BOT_DIR/"
 python3 "$REPO_DIR/scripts/patch-bot-runtime.py" "$BOT_DIR/main.py"
 python3 "$REPO_DIR/scripts/patch-bot-hardening.py" "$BOT_DIR/main.py"
+python3 "$REPO_DIR/scripts/patch-bot-edge.py" "$BOT_DIR/main.py"
 python3 -m py_compile "$BOT_DIR/main.py"
 
 if [ ! -x "$BOT_DIR/.venv/bin/python" ]; then
@@ -91,6 +92,7 @@ StartLimitBurst=10
 Type=simple
 WorkingDirectory=/opt/ferixdi/bot
 EnvironmentFile=/opt/ferixdi/.env
+Environment=PYTHONUNBUFFERED=1
 ExecStart=/opt/ferixdi/bot/.venv/bin/python /opt/ferixdi/bot/main.py
 Restart=always
 RestartSec=2
@@ -106,8 +108,8 @@ KillSignal=SIGTERM
 WantedBy=multi-user.target
 UNIT
 
-# Self-healing watchdog. It verifies bot readiness, Xray state, config JSON and
-# low-disk conditions independently of the Telegram process.
+# Self-healing watchdog. It verifies bot readiness, Xray state, real subscription
+# rendering, DB/Xray consistency, listening ports and low-disk conditions.
 install -m 0755 "$REPO_DIR/scripts/ferixdi-healthcheck.sh" /usr/local/sbin/ferixdi-healthcheck
 cat > /etc/systemd/system/ferixdi-healthcheck.service <<'UNIT'
 [Unit]
@@ -132,14 +134,19 @@ Persistent=true
 WantedBy=timers.target
 UNIT
 
-# Network tuning can improve throughput and queueing delay under load. It cannot
-# beat geographic propagation latency, but BBR+fq is a safe baseline for this VPS.
+# Network tuning: BBR/fq improves queueing under load; MTU probing helps broken
+# paths; TCP Fast Open and a larger listen backlog reduce connection setup cost.
+# These cannot remove geographic RTT but improve responsiveness and resilience.
 cat > /etc/sysctl.d/99-ferixdi-network.conf <<'EOF'
 net.core.default_qdisc=fq
+net.core.somaxconn=4096
 net.ipv4.tcp_congestion_control=bbr
 net.ipv4.tcp_keepalive_time=120
 net.ipv4.tcp_keepalive_intvl=30
 net.ipv4.tcp_keepalive_probes=4
+net.ipv4.tcp_mtu_probing=1
+net.ipv4.tcp_fastopen=3
+net.ipv4.tcp_slow_start_after_idle=0
 EOF
 sysctl --system >/dev/null 2>&1 || true
 
