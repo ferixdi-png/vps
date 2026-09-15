@@ -1,18 +1,16 @@
 #!/usr/bin/env python3
 """Normalize and tune the live Xray node for the reachable Reality endpoints.
 
-Goals:
-- keep only provider-reachable ports so Happ never shows dead entries;
-- keep two valid shortIds per endpoint;
-- put the empirically fastest endpoint first;
-- apply conservative Xray socket tuning supported by current Xray builds;
-- improve outbound address selection without changing routing semantics.
+The current client measurements show gRPC and XHTTP are healthy while the RAW
+profiles on 443/8443 fail Happ's real proxy check. Reuse the already-proven gRPC
+transport on those two externally reachable ports instead of publishing dead RAW
+profiles. Keep XHTTP as the modern stable alternative.
 
-The script is idempotent and rolls the Xray config back if the container fails
-following a restart.
+The script is idempotent and rolls back the live Xray config if restart fails.
 """
 from __future__ import annotations
 
+import copy
 import json
 import secrets
 import shutil
@@ -23,7 +21,9 @@ from pathlib import Path
 CONFIG = Path('/opt/ferixdi/node/xray-config.json')
 CONTAINER = 'ferixdi-xray'
 KEEP_PORTS = {443, 8443, 12443, 13443, 17443}
-PRIORITY = {17443: 0, 443: 1, 12443: 2, 13443: 3, 8443: 4}
+PRIORITY = {17443: 0, 443: 1, 8443: 2, 12443: 3, 13443: 4}
+GRPC_PORTS = {443, 8443, 17443}
+XHTTP_PORTS = {12443, 13443}
 
 
 def run(*args: str) -> str:
@@ -31,11 +31,7 @@ def run(*args: str) -> str:
 
 
 def tune_sockopt(stream: dict) -> None:
-    """Apply low-risk TCP tuning documented by Xray Sockopt."""
     network = stream.get('network', 'raw')
-    # REALITY transports used here are TCP-backed. Keep the values conservative
-    # for a 1 GB VPS: TFO backlog is capped, keepalive detects stale sessions,
-    # and user timeout avoids very long zombie connections.
     if network in ('raw', 'tcp', 'xhttp', 'grpc'):
         sock = stream.setdefault('sockopt', {})
         sock['tcpFastOpen'] = 256
@@ -46,7 +42,6 @@ def tune_sockopt(stream: dict) -> None:
 
 
 def tune_outbounds(cfg: dict) -> None:
-    """Race IPv4/IPv6 destinations and use the fastest resolved address."""
     for outbound in cfg.get('outbounds', []):
         if outbound.get('protocol') not in ('freedom', 'direct'):
             continue
@@ -69,16 +64,42 @@ def tune_outbounds(cfg: dict) -> None:
 def main() -> None:
     cfg = json.loads(CONFIG.read_text())
     original = cfg.get('inbounds', [])
+    by_port = {int(x.get('port')): x for x in original if str(x.get('port', '')).isdigit()}
+
+    if 17443 not in by_port:
+        raise RuntimeError('gRPC template inbound 17443 is missing')
+    grpc_template_stream = copy.deepcopy(by_port[17443].get('streamSettings') or {})
+    if grpc_template_stream.get('network') != 'grpc':
+        raise RuntimeError('port 17443 is not gRPC; refusing automatic conversion')
+
     kept = []
     removed = []
-
     for inbound in original:
         port = inbound.get('port')
         if port not in KEEP_PORTS:
             removed.append(port)
             continue
-        stream = inbound.get('streamSettings') or {}
-        inbound['streamSettings'] = stream
+
+        current_stream = inbound.get('streamSettings') or {}
+        current_reality = copy.deepcopy(current_stream.get('realitySettings') or {})
+
+        # RAW 443/8443 were n/a in Happ while gRPC 17443 was consistently the
+        # lowest-latency transport. Reuse the proven gRPC transport on those
+        # already-open TCP ports, preserving each port's Reality identity.
+        if port in {443, 8443}:
+            stream = copy.deepcopy(grpc_template_stream)
+            stream['network'] = 'grpc'
+            if current_reality:
+                stream['realitySettings'] = current_reality
+            grpc = stream.setdefault('grpcSettings', {})
+            grpc['serviceName'] = f'ferixdi-{port}'
+            inbound['streamSettings'] = stream
+            for client in inbound.setdefault('settings', {}).get('clients', []):
+                client.pop('flow', None)
+        else:
+            stream = current_stream
+            inbound['streamSettings'] = stream
+
         reality = stream.get('realitySettings') or {}
         if inbound.get('protocol', 'vless') == 'vless' and reality:
             short_ids = [str(x) for x in (reality.get('shortIds') or []) if x]
@@ -94,6 +115,14 @@ def main() -> None:
     missing = KEEP_PORTS - ports
     if missing:
         raise RuntimeError(f'required reachable inbounds missing: {sorted(missing)}')
+
+    for inbound in kept:
+        port = int(inbound['port'])
+        network = (inbound.get('streamSettings') or {}).get('network')
+        if port in GRPC_PORTS and network != 'grpc':
+            raise RuntimeError(f'port {port} expected grpc, got {network}')
+        if port in XHTTP_PORTS and network != 'xhttp':
+            raise RuntimeError(f'port {port} expected xhttp, got {network}')
 
     kept.sort(key=lambda x: PRIORITY.get(int(x.get('port', 99999)), 99))
     cfg['inbounds'] = kept
@@ -117,11 +146,12 @@ def main() -> None:
         raise
 
     print('Reachable Reality ports:', ','.join(map(str, sorted(KEEP_PORTS))))
-    print('Subscription priority:', ' > '.join(map(str, [17443, 443, 12443, 13443, 8443])))
+    print('Transport layout: gRPC=17443,443,8443; XHTTP=12443,13443')
+    print('Subscription priority: 17443 > 443 > 8443 > 12443 > 13443')
     print('Removed blocked ports:', ','.join(map(str, [p for p in removed if p is not None])) or 'none')
     print('Xray socket tuning: TFO + BBR + keepalive + TCP user timeout')
     print('Outbound selection: UseIP + Happy Eyeballs')
-    print('Valid client profiles expected: 10 (2 shortIds x 5 reachable ports)')
+    print('Valid client profiles expected: 10 (2 shortIds x 5 reachable endpoints)')
 
 
 if __name__ == '__main__':
