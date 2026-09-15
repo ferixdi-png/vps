@@ -1,0 +1,31 @@
+name: Debug runtime bot build
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths: ['.github/workflows/debug-runtime-build.yml']
+permissions:
+  contents: read
+jobs:
+  debug:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - name: Apply runtime patches and inspect
+        shell: bash
+        run: |
+          set -u
+          cp bot/main.py /tmp/main.py
+          python3 scripts/patch-bot-runtime.py /tmp/main.py
+          python3 scripts/patch-bot-hardening.py /tmp/main.py
+          python3 scripts/patch-bot-profile-clean.py /tmp/main.py
+          python3 scripts/patch-bot-edge.py /tmp/main.py
+          python3 scripts/patch-bot-admin.py /tmp/main.py
+          python3 scripts/patch-bot-trial-day.py /tmp/main.py
+          python3 scripts/patch-bot-antispam.py /tmp/main.py
+          python3 scripts/patch-bot-admin-panel.py /tmp/main.py
+          if ! python3 -m py_compile /tmp/main.py; then
+            nl -ba /tmp/main.py | sed -n '820,875p'
+            exit 1
+          fi
+          echo OK
