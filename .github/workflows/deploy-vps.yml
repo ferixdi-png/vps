@@ -8,6 +8,7 @@ on:
       - 'bot/**'
       - 'scripts/install-bot.sh'
       - 'scripts/patch-bot-runtime.py'
+      - 'scripts/repair-node-metadata.py'
       - '.github/workflows/deploy-vps.yml'
 
 permissions:
@@ -25,6 +26,11 @@ jobs:
       ADMIN_IDS: ${{ secrets.ADMIN_IDS }}
 
     steps:
+      - name: Checkout exact commit
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
       - name: Check required secrets
         shell: bash
         run: |
@@ -48,7 +54,7 @@ jobs:
       - name: Install or update bot
         shell: bash
         run: |
-          curl -fsSL https://raw.githubusercontent.com/ferixdi-png/vps/main/scripts/install-bot.sh | sudo bash
+          sudo env DEPLOY_SHA="$GITHUB_SHA" bash "$GITHUB_WORKSPACE/scripts/install-bot.sh"
 
       - name: Verify bot and VPN node
         shell: bash
