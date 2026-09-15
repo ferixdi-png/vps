@@ -1,11 +1,9 @@
 #!/usr/bin/env python3
-"""Normalize and tune the live Xray node for the reachable Reality endpoints.
+"""Normalize the live Xray node and reserve public TCP/443 for an SNI router.
 
-Keep the measured-good gRPC/XHTTP layout and provision extra Reality shortIds
-for three user-facing fallback cases. The extra profiles are independent client
-credentials on already proven endpoints, so they do not introduce dead ports.
-
-The script is idempotent and rolls back the live Xray config if restart fails.
+The public VPN profile still connects to port 443, but the Xray 443 Reality
+inbound listens internally on 127.0.0.1:10443. Nginx stream routing can then
+send the subscription hostname to HTTPS and all other TLS SNI values to Xray.
 """
 from __future__ import annotations
 
@@ -19,11 +17,12 @@ from pathlib import Path
 
 CONFIG = Path('/opt/ferixdi/node/xray-config.json')
 CONTAINER = 'ferixdi-xray'
-KEEP_PORTS = {443, 8443, 12443, 13443, 17443}
-PRIORITY = {17443: 0, 443: 1, 8443: 2, 12443: 3, 13443: 4}
-GRPC_PORTS = {443, 8443, 17443}
+SHARED_443_INTERNAL = 10443
+KEEP_PORTS = {SHARED_443_INTERNAL, 8443, 12443, 13443, 17443}
+PRIORITY = {17443: 0, SHARED_443_INTERNAL: 1, 8443: 2, 12443: 3, 13443: 4}
+GRPC_PORTS = {SHARED_443_INTERNAL, 8443, 17443}
 XHTTP_PORTS = {12443, 13443}
-SPECIAL_ALIAS_PORTS = {443, 12443, 13443}
+SPECIAL_ALIAS_PORTS = {SHARED_443_INTERNAL, 12443, 13443}
 
 
 def run(*args: str) -> str:
@@ -64,8 +63,17 @@ def tune_outbounds(cfg: dict) -> None:
 def main() -> None:
     cfg = json.loads(CONFIG.read_text())
     original = cfg.get('inbounds', [])
-    by_port = {int(x.get('port')): x for x in original if str(x.get('port', '')).isdigit()}
 
+    # One-time migration: the former public :443 Xray inbound moves behind the
+    # SNI router to localhost:10443. On later deploys this is already done.
+    for inbound in original:
+        if inbound.get('port') == 443:
+            inbound['port'] = SHARED_443_INTERNAL
+            inbound['listen'] = '127.0.0.1'
+        elif inbound.get('port') == SHARED_443_INTERNAL:
+            inbound['listen'] = '127.0.0.1'
+
+    by_port = {int(x.get('port')): x for x in original if str(x.get('port', '')).isdigit()}
     if 17443 not in by_port:
         raise RuntimeError('gRPC template inbound 17443 is missing')
     grpc_template_stream = copy.deepcopy(by_port[17443].get('streamSettings') or {})
@@ -83,19 +91,25 @@ def main() -> None:
         current_stream = inbound.get('streamSettings') or {}
         current_reality = copy.deepcopy(current_stream.get('realitySettings') or {})
 
-        if port in {443, 8443}:
+        if port in {SHARED_443_INTERNAL, 8443}:
             stream = copy.deepcopy(grpc_template_stream)
             stream['network'] = 'grpc'
             if current_reality:
                 stream['realitySettings'] = current_reality
             grpc = stream.setdefault('grpcSettings', {})
-            grpc['serviceName'] = f'ferixdi-{port}'
+            grpc['serviceName'] = 'ferixdi-443' if port == SHARED_443_INTERNAL else f'ferixdi-{port}'
             inbound['streamSettings'] = stream
             for client in inbound.setdefault('settings', {}).get('clients', []):
                 client.pop('flow', None)
         else:
             stream = current_stream
             inbound['streamSettings'] = stream
+
+        if port == SHARED_443_INTERNAL:
+            inbound['listen'] = '127.0.0.1'
+        else:
+            # Keep public VPN transports reachable directly.
+            inbound['listen'] = '0.0.0.0'
 
         reality = stream.get('realitySettings') or {}
         if inbound.get('protocol', 'vless') == 'vless' and reality:
@@ -143,14 +157,12 @@ def main() -> None:
         subprocess.run(['docker', 'restart', CONTAINER], check=False, timeout=30)
         raise
 
-    print('Reachable Reality ports:', ','.join(map(str, sorted(KEEP_PORTS))))
-    print('Transport layout: gRPC=17443,443,8443; XHTTP=12443,13443')
-    print('Special fallback profiles: HTTPS443 + anti-gRPC XHTTP + DPI backup XHTTP')
-    print('Subscription priority: 17443 > 443 > 8443 > 12443 > 13443')
+    print('Reality listeners:', ','.join(map(str, sorted(KEEP_PORTS))))
+    print('Public 443 -> nginx SNI router -> Xray 127.0.0.1:10443')
+    print('Transport layout: gRPC=public443/internal10443,8443,17443; XHTTP=12443,13443')
     print('Removed blocked ports:', ','.join(map(str, [p for p in removed if p is not None])) or 'none')
     print('Xray socket tuning: TFO + BBR + keepalive + TCP user timeout')
     print('Outbound selection: UseIP + Happy Eyeballs')
-    print('Valid client profiles expected: 13 (10 normal + 3 case-specific fallbacks)')
 
 
 if __name__ == '__main__':
