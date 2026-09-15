@@ -1,170 +1,165 @@
-# Ferixdi VPN Final Architecture
+# Ferixdi VPN
 
-Production-oriented starter with:
+Current working layout for the first production node:
 
-- 3 independent VPN nodes
-- USA / Germany / Netherlands layout
-- 5 profiles per node = 15 total
-- one personal subscription link per user
-- per-node REALITY public keys
-- health monitoring
-- automatic removal of dead nodes from subscription output
-- automatic recovery when a node becomes healthy again
-- separate management layer
-- Telegram bot
-- signed subscription URLs
-- Xray-core 26.9.9
+- Xray-core 26.9.9 on the VPS
+- VLESS + REALITY profiles
+- Telegram bot with personal UUID per user
+- 3-day trial
+- automatic expiry and disable
+- one personal subscription URL
+- SQLite user database
+- admin commands for extension/disable/stats
+- bot automatically rewrites Xray clients and restarts Xray safely
 
-## Architecture
+The repository is also structured so more nodes can be added later.
 
-```text
-                    ┌───────────────────────┐
-Telegram ---------->│ Management VPS        │
-                    │ Bot / API / DB        │
-                    │ Subscription / Monitor│
-                    └──────────┬────────────┘
-                               │
-              health + config  │
-          ┌────────────────────┼─────────────────────┐
-          │                    │                     │
-          v                    v                     v
-     USA node              Germany node        Netherlands node
-     5 profiles            5 profiles          5 profiles
-```
+## Telegram bot
 
-User receives ONE link:
+The bot code is in:
 
 ```text
-https://vpn.example.com/sub/PERSONAL_ID?token=SIGNED_TOKEN
+bot/main.py
 ```
 
-If all nodes are healthy, it returns 15 profiles.
-If one node is down, it returns 10.
-If two are down, it returns 5.
-
-The user's link does not change.
-
-## Recommended infrastructure
-
-Use 4 VPS total:
-
-1. Management VPS
-2. USA VPN node
-3. Germany VPN node
-4. Netherlands VPN node
-
-Prefer different hosting providers / ASNs for the VPN nodes.
-
-## Node setup
-
-On each VPN node:
-
-```bash
-cd nodes/node1
-cp .env.example .env
-../../scripts/generate-node-keys.sh
-```
-
-Put the generated private/public key and short ID into that node's `.env`.
-
-Start:
-
-```bash
-docker compose up -d
-```
-
-Repeat for node2 and node3.
-
-Open TCP ports:
+Main user flow:
 
 ```text
-443
-8443
-12443
-13443
-17443
-9444   # health endpoint
+/start
+→ 3 days free
+→ personal UUID is activated in Xray
+→ My key
+→ personal subscription URL
 ```
 
-For production, protect the health endpoint by firewall so only the management server can reach it.
+Buttons:
 
-## Management setup
+- 🎁 3 days free
+- 🔑 My key
+- 📊 Status
+- 📱 How to connect
 
-Copy:
-
-```bash
-cp .env.example .env
-./scripts/generate-management-secrets.sh
-```
-
-Fill:
+Admin commands:
 
 ```text
-BOT_TOKEN
-ADMIN_IDS
-PUBLIC_SUB_BASE_URL
-
-NODE1_HOST
-NODE1_HEALTH_URL
-NODE1_REALITY_PUBLIC_KEY
-NODE1_REALITY_SERVER_NAME
-NODE1_REALITY_SHORT_ID
-
-NODE2_...
-NODE3_...
+/stats
+/extend TELEGRAM_ID DAYS
+/disable TELEGRAM_ID
 ```
 
-Then:
+Set your Telegram numeric ID in `ADMIN_IDS` to enable admin commands.
+
+## Server paths
+
+The first node currently expects:
+
+```text
+/opt/ferixdi/node/xray-config.json
+/root/FERIXDI-NODE-INFO.txt
+```
+
+`FERIXDI-NODE-INFO.txt` must contain:
+
+```text
+IP=SERVER_IPV4
+UUID=BOOTSTRAP_UUID
+PUBLIC_KEY=REALITY_PUBLIC_KEY
+SHORT_ID=REALITY_SHORT_ID
+```
+
+The Telegram bot never commits private credentials to GitHub.
+
+## Install the bot on the VPS
+
+Clone/update the repository and run:
 
 ```bash
-cd management
-docker compose up -d
+curl -fsSL https://raw.githubusercontent.com/ferixdi-png/vps/main/scripts/install-bot.sh | bash
 ```
 
-## Health logic
+The installer:
 
-The monitor checks each node every 60 seconds.
+- installs Python/venv requirements
+- updates the repository
+- installs the bot under `/opt/ferixdi/bot`
+- creates a systemd service `ferixdi-bot`
+- opens TCP 8080 for subscription delivery
+- starts the bot if `/opt/ferixdi/.env` already contains a valid `BOT_TOKEN`
 
-Default:
-- 2 consecutive failures -> node marked DOWN
-- 2 consecutive successes -> node marked UP again
+## Environment
 
-A DOWN node is automatically omitted from new subscription responses.
+Secrets belong only on the VPS, never in the repository.
 
-This prevents users from receiving a node that the management server currently considers unavailable.
+Example `/opt/ferixdi/.env`:
 
-## Important limitation
+```env
+BOT_TOKEN=telegram_bot_token
+ADMIN_IDS=123456789
+TRIAL_DAYS=3
+SUPPORT=@ferixdiii
+PUBLIC_HOST=72.56.126.97
+SUB_PORT=8080
+XRAY_CONFIG=/opt/ferixdi/node/xray-config.json
+XRAY_CONTAINER=ferixdi-xray
+NODE_INFO=/root/FERIXDI-NODE-INFO.txt
+DB_PATH=/opt/ferixdi/data/bot.db
+```
 
-A central health checker cannot fully represent every user's ISP/network conditions.
+GitHub Actions secret `BOT_TOKEN` is safe for GitHub Actions, but it is not automatically copied to the VPS. The VPS bot still needs the token in its own environment.
 
-A node may be reachable from the management server but unreachable from a specific mobile/home network.
+## Service management
 
-For a commercial client, add client-side latency/availability testing as well.
+```bash
+systemctl status ferixdi-bot
+systemctl restart ferixdi-bot
+journalctl -u ferixdi-bot -f
+```
 
-## Security notes
+Health endpoint:
 
-- Never commit `.env`.
-- Use a domain + HTTPS for the subscription service.
-- Keep management API private.
-- Restrict node health ports by firewall.
-- Use a different REALITY keypair per VPN node.
-- Back up the management database.
-- Use different infrastructure providers for better resilience.
-- Rotate credentials if a node is compromised.
+```text
+http://SERVER_IP:8080/health
+```
 
-## Current scope
+Personal subscriptions look like:
 
-This package builds the multi-node infrastructure and subscription resilience layer.
+```text
+http://SERVER_IP:8080/sub/RANDOM_PERSONAL_TOKEN
+```
 
-Billing/payment automation and live Xray user synchronization across all three nodes should be added as a dedicated provisioning service before a public launch.
+The subscription response is a standard base64 V2Ray subscription containing the user's currently configured VLESS profiles.
 
-## FERIXDI FLOW ONLY
+## Xray synchronization
 
-Dedicated split-routing subscription:
+Bot-managed users are written with email identifiers in this form:
 
-`https://YOUR_DOMAIN/flow/PERSONAL_ID?token=SIGNED_TOKEN`
+```text
+tg:123456789
+```
 
-Flow-related Google domains -> healthy US Ferixdi route.
-Everything else -> DIRECT.
+Manual/bootstrap Xray clients are preserved. When trial/paid access changes, only bot-managed clients are rebuilt.
 
-See `FLOW-ONLY.md`.
+Before replacing the Xray config the bot creates a backup. If Xray restart fails, the previous config is restored.
+
+## Security
+
+- never commit `.env`
+- revoke any Telegram token shown in screenshots/chat and issue a new one
+- keep `/opt/ferixdi/.env` mode 600
+- use HTTPS/domain for public subscriptions before a larger commercial launch
+- restrict management endpoints and SSH
+- back up `/opt/ferixdi/data/bot.db`
+
+## Next expansion
+
+Planned multi-node layout:
+
+```text
+Germany + USA + Netherlands
+```
+
+Each node can have multiple transports while the user keeps one subscription. A later management layer can health-check nodes and omit unavailable profiles automatically.
+
+## Google Flow-only mode
+
+The repository also contains `FLOW-ONLY.md` and `client-profiles/flow-domains.txt` for a split-routing profile where selected Google Flow-related domains use the VPN and unrelated traffic remains direct.
