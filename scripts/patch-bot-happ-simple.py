@@ -31,7 +31,7 @@ if old_body not in s:
 s = s.replace(old_body, new_body, 1)
 s = s.replace('"Profile-Title": "Ferixdi VPN"', '"Profile-Title": "FERIXDI CONNECT"')
 
-helper = '''\n\ndef subscription_copy_keyboard(url: str):\n    # Happ's clipboard importer accepts the standard HTTPS subscription URL\n    # directly. Do not prepend happ://add/ here.\n    if len(url) > 256:\n        raise RuntimeError(f"subscription URL too long: {len(url)}")\n    return InlineKeyboardMarkup(\n        inline_keyboard=[\n            [InlineKeyboardButton(text="📋 Скопировать ключ", copy_text=CopyTextButton(text=url))],\n            [InlineKeyboardButton(text="📱 Как добавить в Happ", callback_data="help")],\n            [InlineKeyboardButton(text="💬 Поддержка", url=SUPPORT_URL)],\n        ]\n    )\n'''
+helper = '''\n\ndef subscription_copy_keyboard(url: str):\n    # Happ's clipboard importer accepts the standard HTTPS subscription URL\n    # directly. Do not wrap it in an app-specific deep link.\n    if len(url) > 256:\n        raise RuntimeError(f"subscription URL too long: {len(url)}")\n    return InlineKeyboardMarkup(\n        inline_keyboard=[\n            [InlineKeyboardButton(text="📋 Скопировать ключ", copy_text=CopyTextButton(text=url))],\n            [InlineKeyboardButton(text="📱 Как добавить в Happ", callback_data="help")],\n            [InlineKeyboardButton(text="💬 Поддержка", url=SUPPORT_URL)],\n        ]\n    )\n'''
 
 key_start = s.find('@dp.callback_query(F.data == "key")')
 status_start = s.find('@dp.callback_query(F.data == "status")', key_start)
