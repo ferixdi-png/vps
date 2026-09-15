@@ -13,6 +13,8 @@ on:
       - 'scripts/patch-bot-edge.py'
       - 'scripts/patch-bot-admin.py'
       - 'scripts/patch-bot-trial-day.py'
+      - 'scripts/patch-bot-antispam.py'
+      - 'scripts/patch-bot-admin-panel.py'
       - 'scripts/repair-node-metadata.py'
       - 'scripts/expand-xray-inbounds.py'
       - 'scripts/ferixdi-healthcheck.sh'
@@ -96,7 +98,12 @@ jobs:
           grep -q '24 часа бесплатно' /opt/ferixdi/bot/main.py
           grep -q '24 часа теста закончились' /opt/ferixdi/bot/main.py
           grep -q 'Половина тестового дня уже прошла' /opt/ferixdi/bot/main.py
-          echo 'TRIAL FLOW OK: 24h + 12h reminder + 1h reminder + expiry payment CTA'
+          grep -q 'Ferixdi VPN · Админ-панель' /opt/ferixdi/bot/main.py
+          grep -q 'callback_data="adm_users"' /opt/ferixdi/bot/main.py
+          grep -q 'callback_data="adm_expiring"' /opt/ferixdi/bot/main.py
+          grep -q 'async def admin_extend_cb' /opt/ferixdi/bot/main.py
+          grep -q 'async def admin_disable_cb' /opt/ferixdi/bot/main.py
+          echo 'TRIAL + ADMIN PANEL OK'
 
           sudo python3 -m json.tool /opt/ferixdi/node/xray-config.json >/dev/null
           sudo python3 - <<'PY'
