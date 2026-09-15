@@ -103,7 +103,12 @@ jobs:
           grep -q 'callback_data="adm_expiring"' /opt/ferixdi/bot/main.py
           grep -q 'async def admin_extend_cb' /opt/ferixdi/bot/main.py
           grep -q 'async def admin_disable_cb' /opt/ferixdi/bot/main.py
-          echo 'TRIAL + ADMIN PANEL OK'
+          grep -q 'PAYMENT_PHONE.*89935801642' /opt/ferixdi/bot/main.py
+          grep -q 'callback_data="pay_sent"' /opt/ferixdi/bot/main.py
+          grep -q 'async def pay_approve' /opt/ferixdi/bot/main.py
+          grep -q 'CopyTextButton' /opt/ferixdi/bot/main.py
+          grep -q 'callback_data="admin_payments"' /opt/ferixdi/bot/main.py
+          echo 'TRIAL + ADMIN + MANUAL PAYMENT OK'
 
           sudo python3 -m json.tool /opt/ferixdi/node/xray-config.json >/dev/null
           sudo python3 - <<'PY'
@@ -162,7 +167,7 @@ jobs:
 
           sudo /usr/local/sbin/ferixdi-healthcheck
           sysctl net.core.default_qdisc net.ipv4.tcp_congestion_control net.ipv4.tcp_mtu_probing net.ipv4.tcp_fastopen || true
-          sudo journalctl -u ferixdi-bot --since '10 minutes ago' --no-pager | grep -Ei 'error|exception|failed|warning|subscription render|key callback' || true
+          sudo journalctl -u ferixdi-bot --since '10 minutes ago' --no-pager | grep -Ei 'error|exception|failed|warning|subscription render|key callback|payment' || true
           if [ "$audit_rc" -ne 0 ]; then
             sudo journalctl -u ferixdi-bot --no-pager -n 100 || true
             exit "$audit_rc"
