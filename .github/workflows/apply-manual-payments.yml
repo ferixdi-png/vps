@@ -1,0 +1,35 @@
+name: Apply manual payment flow
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - 'scripts/add_manual_payments.py'
+      - '.github/workflows/apply-manual-payments.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+      - name: Patch bot
+        run: python scripts/add_manual_payments.py
+      - name: Validate Python
+        run: python -m py_compile bot/main.py
+      - name: Commit changes
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add bot/main.py
+          if git diff --cached --quiet; then
+            echo 'No changes to commit'
+            exit 0
+          fi
+          git commit -m 'Add manual 299 RUB payment approval flow'
+          git push
