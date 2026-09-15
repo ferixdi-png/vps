@@ -1,0 +1,21 @@
+name: Verify standard 443
+on:
+  push:
+    branches: [main]
+    paths: ['.github/workflows/test-standard-443.yml']
+permissions:
+  contents: read
+jobs:
+  verify:
+    runs-on: [self-hosted, linux, x64, ferixdi-vps]
+    timeout-minutes: 5
+    steps:
+      - name: Verify warm standard HTTPS endpoint
+        shell: bash
+        run: |
+          set -euo pipefail
+          sleep 8
+          HOST="$(sudo awk -F= '$1=="PUBLIC_HOST" {print $2; exit}' /opt/ferixdi/.env)"
+          IP="$(sudo awk -F= '$1=="IP" {print $2; exit}' /root/FERIXDI-NODE-INFO.txt)"
+          curl --resolve "${HOST}:443:${IP}" -fsS "https://${HOST}/health" | grep -q '"ok": true'
+          echo "STANDARD HTTPS 443 OK: https://${HOST}"
