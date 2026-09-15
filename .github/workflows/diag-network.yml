@@ -1,0 +1,31 @@
+name: Diagnose Ferixdi network
+on:
+  push:
+    branches: [main]
+    paths: ['.github/workflows/diag-network.yml']
+permissions:
+  contents: read
+jobs:
+  diagnose:
+    runs-on: [self-hosted, linux, x64, ferixdi-vps]
+    timeout-minutes: 5
+    steps:
+      - name: Runtime network facts
+        shell: bash
+        run: |
+          set +e
+          echo '=== docker inspect network mode ==='
+          sudo docker inspect -f 'network={{.HostConfig.NetworkMode}} ports={{json .HostConfig.PortBindings}}' ferixdi-xray
+          echo '=== listeners ==='
+          sudo ss -lntp | grep -E ':(443|8080|8443|9443|12443|13443|17443)\b' || true
+          echo '=== container ports ==='
+          sudo docker port ferixdi-xray || true
+          echo '=== xray inbounds ==='
+          sudo python3 - <<'PY'
+          import json
+          cfg=json.load(open('/opt/ferixdi/node/xray-config.json'))
+          for x in cfg.get('inbounds',[]):
+              print({'port':x.get('port'),'listen':x.get('listen'),'network':x.get('streamSettings',{}).get('network'),'serverNames':x.get('streamSettings',{}).get('realitySettings',{}).get('serverNames')})
+          PY
+          echo '=== nginx config ==='
+          sudo nginx -T 2>&1 | grep -E 'listen|server_name|proxy_pass' || true
