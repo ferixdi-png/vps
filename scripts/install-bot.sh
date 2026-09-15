@@ -10,7 +10,7 @@ export DEBIAN_FRONTEND=noninteractive
 apt-get update -y
 apt-get install -y git python3 python3-venv python3-pip ufw
 
-mkdir -p /opt/ferixdi/data /opt/ferixdi/backups
+mkdir -p /opt/ferixdi/data /opt/ferixdi/backups "$BOT_DIR"
 
 if [ -d "$REPO_DIR/.git" ]; then
   git -C "$REPO_DIR" fetch --all --prune
@@ -20,14 +20,17 @@ else
   git clone https://github.com/ferixdi-png/vps.git "$REPO_DIR"
 fi
 
-rm -rf "$BOT_DIR"
-cp -a "$REPO_DIR/bot" "$BOT_DIR"
+# Preserve the virtualenv between deploys so routine bot updates take seconds,
+# not minutes. Only application source is refreshed from the repository.
+find "$BOT_DIR" -maxdepth 1 -type f -name '*.py' -delete
+cp -a "$REPO_DIR/bot/." "$BOT_DIR/"
 python3 "$REPO_DIR/scripts/patch-bot-runtime.py" "$BOT_DIR/main.py"
 python3 -m py_compile "$BOT_DIR/main.py"
 
-python3 -m venv "$BOT_DIR/.venv"
-"$BOT_DIR/.venv/bin/pip" install --upgrade pip
-"$BOT_DIR/.venv/bin/pip" install 'aiogram==3.31.0' 'aiohttp>=3.12,<4'
+if [ ! -x "$BOT_DIR/.venv/bin/python" ]; then
+  python3 -m venv "$BOT_DIR/.venv"
+fi
+"$BOT_DIR/.venv/bin/pip" install -q --disable-pip-version-check 'aiogram==3.31.0' 'aiohttp>=3.12,<4'
 
 if [ ! -f "$ENV_FILE" ]; then
   touch "$ENV_FILE"
@@ -86,7 +89,7 @@ if ! grep -q '^BOT_TOKEN=.' "$ENV_FILE"; then
 fi
 
 systemctl restart ferixdi-bot
-sleep 3
+sleep 2
 systemctl --no-pager --full status ferixdi-bot || true
 
 echo
