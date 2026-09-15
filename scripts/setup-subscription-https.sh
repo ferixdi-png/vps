@@ -4,8 +4,10 @@ set -euo pipefail
 HOST="${1:?usage: setup-subscription-https.sh HOST}"
 PUBLIC_IP="${HOST%.sslip.io}"
 PUBLIC_IP="${PUBLIC_IP//-/.}"
-PUBLIC_PORT=9443
+HTTPS_BACKEND_PORT=9443
+XRAY_443_BACKEND_PORT=10443
 CONF="/etc/nginx/sites-available/ferixdi-subscription"
+STREAM_CONF="/etc/nginx/modules-enabled/99-ferixdi-stream.conf"
 TLS_DIR="/etc/ferixdi/tls"
 ACME="/root/.acme.sh/acme.sh"
 
@@ -14,26 +16,27 @@ if ! command -v nginx >/dev/null || ! command -v curl >/dev/null || ! command -v
   apt-get update -y
   apt-get install -y nginx curl openssl
 fi
+if ! nginx -V 2>&1 | grep -q -- '--with-stream=dynamic' && [ ! -e /usr/lib/nginx/modules/ngx_stream_module.so ]; then
+  apt-get update -y
+  apt-get install -y libnginx-mod-stream
+elif [ ! -e /usr/lib/nginx/modules/ngx_stream_module.so ]; then
+  apt-get update -y
+  apt-get install -y libnginx-mod-stream
+fi
 
 if [ ! -x "$ACME" ]; then
   curl -fsSL https://get.acme.sh | sh
 fi
 "$ACME" --set-default-ca --server letsencrypt >/dev/null
-
 mkdir -p "$TLS_DIR"
 
-# Port 80 is blocked upstream. Renew the certificate through TLS-ALPN on 443.
-# Xray is paused only for the ACME handshake and immediately restored.
+# The public :443 socket is owned by nginx after this migration. For certificate
+# renewal we temporarily stop nginx so acme.sh can answer TLS-ALPN directly.
 if [ ! -s "$TLS_DIR/fullchain.pem" ] || ! openssl x509 -checkend 1209600 -noout -in "$TLS_DIR/fullchain.pem" >/dev/null 2>&1; then
-  restore_xray() {
-    docker start ferixdi-xray >/dev/null 2>&1 || true
-  }
-  trap restore_xray EXIT
-  docker stop ferixdi-xray >/dev/null 2>&1 || true
-  "$ACME" --issue --alpn -d "$HOST" --server letsencrypt --keylength ec-256 \
-    --pre-hook 'docker stop ferixdi-xray >/dev/null 2>&1 || true' \
-    --post-hook 'docker start ferixdi-xray >/dev/null 2>&1 || true'
-  restore_xray
+  systemctl stop nginx >/dev/null 2>&1 || true
+  restore_nginx() { systemctl start nginx >/dev/null 2>&1 || true; }
+  trap restore_nginx EXIT
+  "$ACME" --issue --alpn -d "$HOST" --server letsencrypt --keylength ec-256 --force
   trap - EXIT
 
   "$ACME" --install-cert -d "$HOST" --ecc \
@@ -42,11 +45,12 @@ if [ ! -s "$TLS_DIR/fullchain.pem" ] || ! openssl x509 -checkend 1209600 -noout 
     --reloadcmd 'nginx -t && systemctl reload nginx'
 fi
 
-systemctl stop ferixdi-bot >/dev/null 2>&1 || true
-
+# HTTPS terminates only on localhost. Public TCP/443 is a TLS SNI router:
+# - our subscription hostname -> local nginx HTTPS -> Telegram bot
+# - every other SNI (Reality uses www.microsoft.com) -> local Xray backend
 cat > "$CONF" <<EOF
 server {
-    listen ${PUBLIC_IP}:${PUBLIC_PORT} ssl;
+    listen 127.0.0.1:${HTTPS_BACKEND_PORT} ssl;
     server_name ${HOST};
 
     ssl_certificate ${TLS_DIR}/fullchain.pem;
@@ -66,12 +70,32 @@ server {
 }
 EOF
 
+cat > "$STREAM_CONF" <<EOF
+stream {
+    map \$ssl_preread_server_name \$ferixdi_backend {
+        ${HOST} 127.0.0.1:${HTTPS_BACKEND_PORT};
+        default 127.0.0.1:${XRAY_443_BACKEND_PORT};
+    }
+
+    server {
+        listen ${PUBLIC_IP}:443 reuseport;
+        proxy_pass \$ferixdi_backend;
+        ssl_preread on;
+        proxy_connect_timeout 5s;
+        proxy_timeout 300s;
+    }
+}
+EOF
+
 ln -sfn "$CONF" /etc/nginx/sites-enabled/ferixdi-subscription
 rm -f /etc/nginx/sites-enabled/default
 nginx -t
-systemctl enable --now nginx
-systemctl reload nginx
-ufw allow ${PUBLIC_PORT}/tcp || true
+systemctl enable nginx
+systemctl restart nginx
+
+ufw allow 443/tcp || true
+ufw delete allow 9443/tcp >/dev/null 2>&1 || true
 ufw delete allow 8080/tcp >/dev/null 2>&1 || true
 
-echo "HTTPS subscription endpoint ready: https://${HOST}:${PUBLIC_PORT}"
+echo "Standard HTTPS subscription endpoint ready: https://${HOST}"
+echo "Shared 443 routing: ${HOST} -> HTTPS; other SNI -> Xray 127.0.0.1:${XRAY_443_BACKEND_PORT}"
