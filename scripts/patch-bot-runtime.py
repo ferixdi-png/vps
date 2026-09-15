@@ -77,7 +77,17 @@ replace_once(
     "help early ack",
 )
 help_start = s.index('@dp.callback_query(F.data == "help")')
-help_end = s.index('@dp.message(Command("stats"))')
+# Stop at the next top-level handler, not at /stats. Payment handlers may sit
+# between help and stats and must never be rewritten as part of the help block.
+next_handler_positions = [
+    pos for pos in (
+        s.find('@dp.callback_query(F.data == "pay_open")', help_start + 1),
+        s.find('@dp.message(Command("stats"))', help_start + 1),
+    ) if pos >= 0
+]
+if not next_handler_positions:
+    raise SystemExit('runtime patch help section end missing')
+help_end = min(next_handler_positions)
 help_section = s[help_start:help_end]
 first = help_section.find("    await c.answer()\n")
 if first >= 0:
