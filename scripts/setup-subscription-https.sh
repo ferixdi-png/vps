@@ -11,6 +11,8 @@ if ! command -v nginx >/dev/null || ! command -v certbot >/dev/null; then
   apt-get install -y nginx certbot
 fi
 
+# Let's Encrypt HTTP-01 must reach port 80 before the certificate exists.
+ufw allow 80/tcp || true
 mkdir -p "$ACME_ROOT/.well-known/acme-challenge"
 
 cat > "$CONF" <<EOF
@@ -35,7 +37,7 @@ nginx -t
 systemctl enable --now nginx
 systemctl reload nginx
 
-if [ ! -s "/etc/letsencrypt/live/${HOST}/fullchain.pem" ] || ! certbot certificates 2>/dev/null | grep -A6 "Certificate Name: ${HOST}" | grep -q 'VALID:'; then
+if [ ! -s "/etc/letsencrypt/live/${HOST}/fullchain.pem" ]; then
   certbot certonly \
     --webroot -w "$ACME_ROOT" \
     -d "$HOST" \
@@ -92,6 +94,7 @@ systemctl reload nginx
 EOF
 chmod 0755 /etc/letsencrypt/renewal-hooks/deploy/reload-nginx.sh
 
+ufw allow 9443/tcp || true
 nginx -t
 systemctl reload nginx
 
