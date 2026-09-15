@@ -1,0 +1,30 @@
+name: Finalize standard 443
+on:
+  push:
+    branches: [main]
+    paths: ['.github/workflows/finalize-standard-443.yml']
+permissions:
+  contents: read
+jobs:
+  finalize:
+    runs-on: [self-hosted, linux, x64, ferixdi-vps]
+    timeout-minutes: 5
+    steps:
+      - name: Set live subscription to standard HTTPS 443
+        shell: bash
+        run: |
+          set -euo pipefail
+          ENV=/opt/ferixdi/.env
+          tmp="$(mktemp)"
+          sudo grep -v '^SUB_PORT=' "$ENV" > "$tmp" || true
+          printf 'SUB_PORT=443\n' >> "$tmp"
+          sudo install -m 600 "$tmp" "$ENV"
+          rm -f "$tmp"
+          sudo systemctl restart ferixdi-bot
+          sleep 3
+          HOST="$(sudo awk -F= '$1=="PUBLIC_HOST" {print $2; exit}' "$ENV")"
+          IP="$(sudo awk -F= '$1=="IP" {print $2; exit}' /root/FERIXDI-NODE-INFO.txt)"
+          curl --resolve "${HOST}:443:${IP}" -fsS "https://${HOST}/health" | grep -q '"ok": true'
+          sudo ss -lntH | grep -q "${IP}:443"
+          sudo ss -lntH | grep -q '127.0.0.1:10443'
+          echo "STANDARD HTTPS 443 OK: https://${HOST}"
