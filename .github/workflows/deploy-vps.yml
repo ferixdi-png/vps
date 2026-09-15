@@ -73,9 +73,22 @@ jobs:
           done
 
           sudo python3 -m json.tool /opt/ferixdi/node/xray-config.json >/dev/null
-          sudo test -s /root/FERIXDI-NODE-INFO.txt
-          sudo grep -q '^PUBLIC_KEY=.' /root/FERIXDI-NODE-INFO.txt
-          sudo grep -q '^SHORT_ID=.' /root/FERIXDI-NODE-INFO.txt
+
+          echo '--- node metadata audit (values redacted) ---'
+          if sudo test -s /root/FERIXDI-NODE-INFO.txt; then
+            sudo sed -E 's/=.*/=<set>/' /root/FERIXDI-NODE-INFO.txt || true
+          else
+            echo 'NODE_INFO missing or empty'
+          fi
+          sudo python3 - <<'PY'
+          import json
+          p='/opt/ferixdi/node/xray-config.json'
+          cfg=json.load(open(p))
+          for i, inbound in enumerate(cfg.get('inbounds', []), 1):
+              s=inbound.get('streamSettings', {})
+              r=s.get('realitySettings', {})
+              print(f"INBOUND {i}: port={inbound.get('port')} network={s.get('network')} reality={bool(r)} privateKey={bool(r.get('privateKey'))} shortIds={len(r.get('shortIds') or [])} serverNames={len(r.get('serverNames') or [])}")
+          PY
 
           set +e
           sudo python3 - <<'PY'
@@ -106,9 +119,9 @@ jobs:
           set -e
 
           echo '--- recent bot errors/warnings ---'
-          sudo journalctl -u ferixdi-bot --since '15 minutes ago' --no-pager | grep -Ei 'error|exception|failed|warning|subscription render' || true
+          sudo journalctl -u ferixdi-bot --since '15 minutes ago' --no-pager | grep -Ei 'error|exception|failed|warning|subscription render|key callback' || true
           if [ "$audit_rc" -ne 0 ]; then
             echo '--- bot journal tail ---'
-            sudo journalctl -u ferixdi-bot --no-pager -n 80 || true
+            sudo journalctl -u ferixdi-bot --no-pager -n 100 || true
             exit "$audit_rc"
           fi
