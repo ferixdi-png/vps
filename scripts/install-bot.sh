@@ -10,7 +10,7 @@ export DEBIAN_FRONTEND=noninteractive
 apt-get update -y
 apt-get install -y git python3 python3-venv python3-pip ufw
 
-mkdir -p /opt/ferixdi/data
+mkdir -p /opt/ferixdi/data /opt/ferixdi/backups
 
 if [ -d "$REPO_DIR/.git" ]; then
   git -C "$REPO_DIR" fetch --all --prune
@@ -29,10 +29,9 @@ python3 -m venv "$BOT_DIR/.venv"
 
 if [ ! -f "$ENV_FILE" ]; then
   touch "$ENV_FILE"
-  chmod 600 "$ENV_FILE"
 fi
+chmod 600 "$ENV_FILE"
 
-# Ensure non-secret defaults exist without overwriting existing values.
 ensure_env() {
   local key="$1" value="$2"
   if ! grep -q "^${key}=" "$ENV_FILE" 2>/dev/null; then
@@ -44,11 +43,16 @@ PUBLIC_IP="$(hostname -I | tr ' ' '\n' | grep -E '^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]
 ensure_env TRIAL_DAYS 3
 ensure_env SUB_PORT 8080
 ensure_env PUBLIC_HOST "$PUBLIC_IP"
+ensure_env PUBLIC_SCHEME 'http'
 ensure_env SUPPORT '@ferixdiii'
+ensure_env SUPPORT_URL 'https://t.me/ferixdiii'
+ensure_env HAPP_URL 'https://happ.info/'
 ensure_env XRAY_CONFIG '/opt/ferixdi/node/xray-config.json'
 ensure_env XRAY_CONTAINER 'ferixdi-xray'
 ensure_env NODE_INFO '/root/FERIXDI-NODE-INFO.txt'
 ensure_env DB_PATH '/opt/ferixdi/data/bot.db'
+ensure_env BACKUP_DIR '/opt/ferixdi/backups'
+ensure_env BACKUP_KEEP 14
 
 cat > "$SERVICE_FILE" <<'UNIT'
 [Unit]
@@ -75,9 +79,7 @@ systemctl daemon-reload
 systemctl enable ferixdi-bot.service
 
 if ! grep -q '^BOT_TOKEN=.' "$ENV_FILE"; then
-  echo
   echo 'BOT_TOKEN is not present in /opt/ferixdi/.env.'
-  echo 'Add it, then run: systemctl restart ferixdi-bot'
   exit 2
 fi
 
