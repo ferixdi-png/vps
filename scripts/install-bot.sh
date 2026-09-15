@@ -38,6 +38,7 @@ find "$BOT_DIR" -maxdepth 1 -type f -name '*.py' -delete
 cp -a "$REPO_DIR/bot/." "$BOT_DIR/"
 python3 "$REPO_DIR/scripts/patch-bot-runtime.py" "$BOT_DIR/main.py"
 python3 "$REPO_DIR/scripts/patch-bot-hardening.py" "$BOT_DIR/main.py"
+python3 "$REPO_DIR/scripts/patch-bot-profile-clean.py" "$BOT_DIR/main.py"
 python3 "$REPO_DIR/scripts/patch-bot-edge.py" "$BOT_DIR/main.py"
 python3 "$REPO_DIR/scripts/patch-bot-admin.py" "$BOT_DIR/main.py"
 python3 -m py_compile "$BOT_DIR/main.py"
