@@ -22,6 +22,8 @@ fi
 
 rm -rf "$BOT_DIR"
 cp -a "$REPO_DIR/bot" "$BOT_DIR"
+python3 "$REPO_DIR/scripts/patch-bot-runtime.py" "$BOT_DIR/main.py"
+python3 -m py_compile "$BOT_DIR/main.py"
 
 python3 -m venv "$BOT_DIR/.venv"
 "$BOT_DIR/.venv/bin/pip" install --upgrade pip
