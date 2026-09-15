@@ -1,5 +1,6 @@
 name: Validate
 on: [push, pull_request]
+
 jobs:
   validate:
     runs-on: ubuntu-latest
@@ -8,6 +9,9 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - run: |
-          python -m py_compile management/api/app.py management/api/db.py management/bot/main.py management/subscription/app.py management/monitor/worker.py
-          python -m json.tool management/nodes.json >/dev/null
+      - name: Validate Python and shell files
+        run: |
+          python -m py_compile management/api/app.py management/api/db.py bot/main.py
+          bash -n scripts/install-bot.sh
+          bash -n scripts/generate-node-keys.sh
+          bash -n scripts/generate-management-secrets.sh
