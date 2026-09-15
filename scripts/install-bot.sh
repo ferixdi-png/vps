@@ -72,6 +72,13 @@ PUBLIC_IP="$(awk -F= '$1=="IP" && length($2)>0 {print $2; exit}' /root/FERIXDI-N
 if [ -z "$PUBLIC_IP" ]; then
   PUBLIC_IP="$(hostname -I | tr ' ' '\n' | grep -E '^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$' | head -1 || true)"
 fi
+if [ -z "$PUBLIC_IP" ]; then
+  echo 'Could not determine public IPv4.'
+  exit 5
+fi
+SUB_HOST="${PUBLIC_IP//./-}.sslip.io"
+
+bash "$REPO_DIR/scripts/setup-subscription-https.sh" "$SUB_HOST"
 
 CURRENT_ADMIN_IDS="$(awk -F= '$1=="ADMIN_IDS" {print $2; exit}' "$ENV_FILE" 2>/dev/null || true)"
 if [ -z "$CURRENT_ADMIN_IDS" ] && [ -s /opt/ferixdi/data/bot.db ]; then
@@ -93,9 +100,9 @@ if [ -n "$CURRENT_ADMIN_IDS" ]; then
 fi
 
 set_env TRIAL_DAYS 1
-set_env SUB_PORT 8080
-set_env PUBLIC_HOST "$PUBLIC_IP"
-set_env PUBLIC_SCHEME 'http'
+set_env SUB_PORT 9443
+set_env PUBLIC_HOST "$SUB_HOST"
+set_env PUBLIC_SCHEME 'https'
 set_env SUPPORT '@ferixdiii'
 set_env SUPPORT_URL 'https://t.me/ferixdiii'
 set_env HAPP_URL 'https://happ.info/'
@@ -183,10 +190,10 @@ net.ipv4.ip_local_port_range=10240 65535
 EOF
 sysctl --system >/dev/null 2>&1 || true
 
-for port in 443 8443 12443 13443 17443; do
+for port in 80 443 8443 9443 12443 13443 17443; do
   ufw allow "${port}/tcp" || true
 done
-ufw allow 8080/tcp || true
+ufw delete allow 8080/tcp >/dev/null 2>&1 || true
 systemctl daemon-reload
 systemctl enable ferixdi-bot.service
 systemctl enable --now ferixdi-healthcheck.timer
@@ -216,4 +223,4 @@ systemctl --no-pager --full status ferixdi-healthcheck.timer || true
 
 echo
 echo 'FERIXDI BOT INSTALLED'
-echo "Subscription endpoint: http://${PUBLIC_IP}:8080/sub/<personal-token>"
+echo "Subscription endpoint: https://${SUB_HOST}:9443/sub/<personal-token>"
