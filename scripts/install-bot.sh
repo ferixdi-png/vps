@@ -41,6 +41,7 @@ python3 "$REPO_DIR/scripts/patch-bot-hardening.py" "$BOT_DIR/main.py"
 python3 "$REPO_DIR/scripts/patch-bot-profile-clean.py" "$BOT_DIR/main.py"
 python3 "$REPO_DIR/scripts/patch-bot-edge.py" "$BOT_DIR/main.py"
 python3 "$REPO_DIR/scripts/patch-bot-admin.py" "$BOT_DIR/main.py"
+python3 "$REPO_DIR/scripts/patch-bot-trial-day.py" "$BOT_DIR/main.py"
 python3 -m py_compile "$BOT_DIR/main.py"
 
 if [ ! -x "$BOT_DIR/.venv/bin/python" ]; then
@@ -86,7 +87,7 @@ if [ -n "$CURRENT_ADMIN_IDS" ]; then
   set_env ADMIN_IDS "$CURRENT_ADMIN_IDS"
 fi
 
-set_env TRIAL_DAYS 3
+set_env TRIAL_DAYS 1
 set_env SUB_PORT 8080
 set_env PUBLIC_HOST "$PUBLIC_IP"
 set_env PUBLIC_SCHEME 'http'
