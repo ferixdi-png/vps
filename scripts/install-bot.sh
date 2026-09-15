@@ -46,6 +46,7 @@ python3 "$REPO_DIR/scripts/patch-bot-antispam.py" "$BOT_DIR/main.py"
 python3 "$REPO_DIR/scripts/patch-bot-admin-panel.py" "$BOT_DIR/main.py"
 python3 "$REPO_DIR/scripts/patch-bot-payment-ui.py" "$BOT_DIR/main.py"
 python3 "$REPO_DIR/scripts/patch-bot-referrals.py" "$BOT_DIR/main.py"
+python3 "$REPO_DIR/scripts/patch-bot-happ-simple.py" "$BOT_DIR/main.py"
 python3 -m py_compile "$BOT_DIR/main.py"
 
 if [ ! -x "$BOT_DIR/.venv/bin/python" ]; then
@@ -160,8 +161,6 @@ WantedBy=timers.target
 UNIT
 
 cat > /etc/sysctl.d/99-ferixdi-network.conf <<'EOF'
-# Conservative low-latency/high-throughput profile for a 1 GB VPN VPS.
-# Max buffer values are ceilings, not per-connection allocations.
 net.core.default_qdisc=fq
 net.ipv4.tcp_congestion_control=bbr
 net.core.somaxconn=8192
@@ -184,7 +183,6 @@ net.ipv4.ip_local_port_range=10240 65535
 EOF
 sysctl --system >/dev/null 2>&1 || true
 
-# Publish only ports that are actually exposed by the provider firewall.
 for port in 443 8443 12443 13443 17443; do
   ufw allow "${port}/tcp" || true
 done
