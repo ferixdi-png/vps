@@ -167,7 +167,7 @@ net.ipv4.tcp_slow_start_after_idle=0
 EOF
 sysctl --system >/dev/null 2>&1 || true
 
-for port in 443 8443 9443 10443 11443 12443 13443 14443 15443 17443; do
+for port in 443 8443 9443 10443 11443 12443 13443 14443 15443 16443 17443 18443; do
   ufw allow "${port}/tcp" || true
 done
 ufw allow 8080/tcp || true
