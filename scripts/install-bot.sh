@@ -155,19 +155,27 @@ WantedBy=timers.target
 UNIT
 
 cat > /etc/sysctl.d/99-ferixdi-network.conf <<'EOF'
+# Low-latency + high-throughput profile for a small VPS.
 net.core.default_qdisc=fq
-net.core.somaxconn=4096
 net.ipv4.tcp_congestion_control=bbr
+net.core.somaxconn=8192
+net.core.netdev_max_backlog=16384
+net.core.rmem_max=16777216
+net.core.wmem_max=16777216
+net.ipv4.tcp_rmem=4096 131072 16777216
+net.ipv4.tcp_wmem=4096 16384 16777216
 net.ipv4.tcp_keepalive_time=120
 net.ipv4.tcp_keepalive_intvl=30
 net.ipv4.tcp_keepalive_probes=4
 net.ipv4.tcp_mtu_probing=1
 net.ipv4.tcp_fastopen=3
 net.ipv4.tcp_slow_start_after_idle=0
+net.ipv4.tcp_fin_timeout=15
 EOF
 sysctl --system >/dev/null 2>&1 || true
 
-for port in 443 8443 9443 10443 11443 12443 13443 14443 15443 16443 17443 18443; do
+# Publish only ports that are actually exposed by the provider firewall.
+for port in 443 8443 12443 13443 17443; do
   ufw allow "${port}/tcp" || true
 done
 ufw allow 8080/tcp || true
