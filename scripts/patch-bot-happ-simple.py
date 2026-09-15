@@ -30,6 +30,22 @@ if host_count != 1:
     raise SystemExit(f'profile host finalization expected 1 assignment, found {host_count}')
 s = s[:profile_start] + profile_block + s[profile_end:]
 
+# Subscription download URL must use a TLS hostname matching the Let's Encrypt certificate.
+# The VLESS profiles themselves still use the raw server IP.
+sub_start = s.find('def subscription_url(row):\n')
+sub_end = s.find('\n\ndef ', sub_start + 1)
+if sub_start < 0 or sub_end < 0:
+    raise SystemExit('subscription_url section not found')
+new_sub = '''def subscription_url(row):
+    info = read_node_info()
+    ip = (info.get("IP") or "").strip()
+    if not ip:
+        return None
+    host = ip.replace(".", "-") + ".sslip.io"
+    return f"https://{host}/sub/{row['sub_token']}"
+'''
+s = s[:sub_start] + new_sub + s[sub_end:]
+
 old_body = '    body = base64.b64encode(("\\n".join(links) + "\\n").encode()).decode()\n'
 new_body = '    body = "#profile-title: FERIXDI CONNECT\\n#profile-update-interval: 1\\n" + "\\n".join(links) + "\\n"\n'
 if old_body in s:
@@ -61,7 +77,7 @@ m = re.search(r'async def key\(c: CallbackQuery\):\n(    if await reject_callbac
 if m and m.group(1):
     rate_line = m.group(1)
 
-new_key = '''@dp.callback_query(F.data == "key")\nasync def key(c: CallbackQuery):\n''' + rate_line + '''    await c.answer("Готовлю ключ…")\n    try:\n        ensure_user(c.from_user)\n        row = get_user(c.from_user.id)\n        if not is_active(row):\n            await c.message.answer("🔴 Доступ сейчас не активен. Активируй тест или продли подписку.", reply_markup=menu())\n            return\n        url = subscription_url(row)\n        if not url or not url.startswith("https://"):\n            raise RuntimeError("secure subscription URL is not configured")\n        if len(url) > 256:\n            raise RuntimeError(f"subscription URL unexpectedly long: {len(url)}")\n        text = (\n            "🔑 <b>FERIXDI CONNECT</b>\\n\\n"\n            "Нажми кнопку ниже, чтобы скопировать ключ.\\n\\n"\n            f"<code>{url}</code>\\n\\n"\n            "Дальше: Happ → <b>+</b> → <b>Вставить из буфера обмена</b>.\\n"\n            "Happ загрузит сразу <b>8 профилей</b>."\n        )\n        await c.message.answer(\n            text,\n            parse_mode="HTML",\n            reply_markup=subscription_copy_keyboard(url),\n            disable_web_page_preview=True,\n        )\n    except Exception as e:\n        print(f"key callback error tg={c.from_user.id}: {type(e).__name__}: {e}", flush=True)\n        await c.message.answer("⚠️ Не удалось сформировать ключ. Попробуй ещё раз через несколько секунд.", reply_markup=menu())\n\n\n'''
+new_key = '''@dp.callback_query(F.data == "key")\nasync def key(c: CallbackQuery):\n''' + rate_line + '''    await c.answer("Готовлю ключ…")\n    try:\n        ensure_user(c.from_user)\n        row = get_user(c.from_user.id)\n        if not is_active(row):\n            await c.message.answer("🔴 Доступ сейчас не активен. Активируй тест или продли подписку.", reply_markup=menu())\n            return\n        url = subscription_url(row)\n        if not url or not url.startswith("https://"):\n            raise RuntimeError("secure subscription URL is not configured")\n        if len(url) > 256:\n            raise RuntimeError(f"subscription URL unexpectedly long: {len(url)}")\n        text = (\n            "🔑 <b>FERIXDI CONNECT</b>\\n\\n"\n            "Нажми кнопку ниже, чтобы скопировать ключ.\\n\\n"\n            "Дальше: Happ → <b>+</b> → <b>Вставить из буфера обмена</b>.\\n"\n            "Happ загрузит сразу <b>8 профилей</b>."\n        )\n        await c.message.answer(\n            text,\n            parse_mode="HTML",\n            reply_markup=subscription_copy_keyboard(url),\n            disable_web_page_preview=True,\n        )\n    except Exception as e:\n        print(f"key callback error tg={c.from_user.id}: {type(e).__name__}: {e}", flush=True)\n        await c.message.answer("⚠️ Не удалось сформировать ключ. Попробуй ещё раз через несколько секунд.", reply_markup=menu())\n\n\n'''
 s = s[:key_start] + new_key + s[status_start:]
 
 help_start = s.find('@dp.callback_query(F.data == "help")')
@@ -76,4 +92,4 @@ if help_start >= 0 and next_start >= 0:
     s = s[:help_start] + new_help + s[next_start:]
 
 path.write_text(s)
-print(f'Happ copy-only flow patched {path}')
+print(f'Happ copy-only flow with forced TLS hostname patched {path}')
