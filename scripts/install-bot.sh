@@ -7,8 +7,10 @@ ENV_FILE="/opt/ferixdi/.env"
 SERVICE_FILE="/etc/systemd/system/ferixdi-bot.service"
 
 export DEBIAN_FRONTEND=noninteractive
-apt-get update -y
-apt-get install -y git python3 python3-venv python3-pip ufw
+if ! command -v git >/dev/null || ! command -v python3 >/dev/null; then
+  apt-get update -y
+  apt-get install -y git python3 python3-venv python3-pip ufw
+fi
 
 mkdir -p /opt/ferixdi/data /opt/ferixdi/backups "$BOT_DIR"
 
@@ -20,8 +22,7 @@ else
   git clone https://github.com/ferixdi-png/vps.git "$REPO_DIR"
 fi
 
-# Preserve the virtualenv between deploys so routine bot updates take seconds,
-# not minutes. Only application source is refreshed from the repository.
+# Preserve the virtualenv between deploys; refresh only application source.
 find "$BOT_DIR" -maxdepth 1 -type f -name '*.py' -delete
 cp -a "$REPO_DIR/bot/." "$BOT_DIR/"
 python3 "$REPO_DIR/scripts/patch-bot-runtime.py" "$BOT_DIR/main.py"
@@ -37,27 +38,32 @@ if [ ! -f "$ENV_FILE" ]; then
 fi
 chmod 600 "$ENV_FILE"
 
-ensure_env() {
-  local key="$1" value="$2"
-  if ! grep -q "^${key}=" "$ENV_FILE" 2>/dev/null; then
-    printf '%s=%s\n' "$key" "$value" >> "$ENV_FILE"
-  fi
+set_env() {
+  local key="$1" value="$2" tmp
+  tmp="$(mktemp)"
+  grep -v "^${key}=" "$ENV_FILE" > "$tmp" || true
+  printf '%s=%s\n' "$key" "$value" >> "$tmp"
+  cat "$tmp" > "$ENV_FILE"
+  rm -f "$tmp"
 }
 
 PUBLIC_IP="$(hostname -I | tr ' ' '\n' | grep -E '^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$' | head -1 || true)"
-ensure_env TRIAL_DAYS 3
-ensure_env SUB_PORT 8080
-ensure_env PUBLIC_HOST "$PUBLIC_IP"
-ensure_env PUBLIC_SCHEME 'http'
-ensure_env SUPPORT '@ferixdiii'
-ensure_env SUPPORT_URL 'https://t.me/ferixdiii'
-ensure_env HAPP_URL 'https://happ.info/'
-ensure_env XRAY_CONFIG '/opt/ferixdi/node/xray-config.json'
-ensure_env XRAY_CONTAINER 'ferixdi-xray'
-ensure_env NODE_INFO '/root/FERIXDI-NODE-INFO.txt'
-ensure_env DB_PATH '/opt/ferixdi/data/bot.db'
-ensure_env BACKUP_DIR '/opt/ferixdi/backups'
-ensure_env BACKUP_KEEP 14
+# On this Timeweb node hostname -I resolves to the public address. Keep these
+# runtime paths canonical on every deploy so stale .env values cannot break keys.
+set_env TRIAL_DAYS 3
+set_env SUB_PORT 8080
+set_env PUBLIC_HOST "$PUBLIC_IP"
+set_env PUBLIC_SCHEME 'http'
+set_env SUPPORT '@ferixdiii'
+set_env SUPPORT_URL 'https://t.me/ferixdiii'
+set_env HAPP_URL 'https://happ.info/'
+set_env XRAY_CONFIG '/opt/ferixdi/node/xray-config.json'
+set_env XRAY_CONTAINER 'ferixdi-xray'
+set_env NODE_INFO '/root/FERIXDI-NODE-INFO.txt'
+set_env DB_PATH '/opt/ferixdi/data/bot.db'
+set_env BACKUP_DIR '/opt/ferixdi/backups'
+set_env BACKUP_KEEP 14
+chmod 600 "$ENV_FILE"
 
 cat > "$SERVICE_FILE" <<'UNIT'
 [Unit]
@@ -72,7 +78,9 @@ WorkingDirectory=/opt/ferixdi/bot
 EnvironmentFile=/opt/ferixdi/.env
 ExecStart=/opt/ferixdi/bot/.venv/bin/python /opt/ferixdi/bot/main.py
 Restart=always
-RestartSec=3
+RestartSec=2
+StartLimitIntervalSec=60
+StartLimitBurst=10
 User=root
 
 [Install]
@@ -86,6 +94,14 @@ systemctl enable ferixdi-bot.service
 if ! grep -q '^BOT_TOKEN=.' "$ENV_FILE"; then
   echo 'BOT_TOKEN is not present in /opt/ferixdi/.env.'
   exit 2
+fi
+if ! test -s /root/FERIXDI-NODE-INFO.txt; then
+  echo 'Node metadata file is missing.'
+  exit 3
+fi
+if ! test -s /opt/ferixdi/node/xray-config.json; then
+  echo 'Xray config is missing.'
+  exit 4
 fi
 
 systemctl restart ferixdi-bot
