@@ -8,7 +8,9 @@ on:
       - 'bot/**'
       - 'scripts/install-bot.sh'
       - 'scripts/patch-bot-runtime.py'
+      - 'scripts/patch-bot-hardening.py'
       - 'scripts/repair-node-metadata.py'
+      - 'scripts/ferixdi-healthcheck.sh'
       - '.github/workflows/deploy-vps.yml'
 
 permissions:
@@ -61,6 +63,9 @@ jobs:
         run: |
           set -e
           sudo docker ps --format '{{.Names}} {{.Status}}' | grep ferixdi-xray
+          sudo systemctl is-enabled --quiet ferixdi-bot
+          sudo systemctl is-enabled --quiet ferixdi-healthcheck.timer
+          sudo systemctl is-active --quiet ferixdi-healthcheck.timer
 
           for i in $(seq 1 20); do
             if sudo systemctl is-active --quiet ferixdi-bot && curl -fsS http://127.0.0.1:8080/health; then
@@ -116,7 +121,7 @@ jobs:
                   raise
               decoded = base64.b64decode(raw, validate=True).decode()
               profiles = [x for x in decoded.splitlines() if x.startswith('vless://')]
-              assert profiles, 'active subscription rendered no VLESS profiles'
+              assert len(profiles) >= 10, f'expected >=10 VLESS fallback profiles, got {len(profiles)}'
               print(f'SUBSCRIPTION OK: profiles={len(profiles)}')
           else:
               print('SUBSCRIPTION TEST SKIPPED: no enabled user')
@@ -124,8 +129,11 @@ jobs:
           audit_rc=$?
           set -e
 
+          echo '--- network tuning ---'
+          sysctl net.core.default_qdisc net.ipv4.tcp_congestion_control || true
+
           echo '--- recent bot errors/warnings ---'
-          sudo journalctl -u ferixdi-bot --since '15 minutes ago' --no-pager | grep -Ei 'error|exception|failed|warning|subscription render|key callback' || true
+          sudo journalctl -u ferixdi-bot --since '10 minutes ago' --no-pager | grep -Ei 'error|exception|failed|warning|subscription render|key callback' || true
           if [ "$audit_rc" -ne 0 ]; then
             echo '--- bot journal tail ---'
             sudo journalctl -u ferixdi-bot --no-pager -n 100 || true
