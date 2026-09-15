@@ -32,6 +32,7 @@ fi
 echo "Deploying commit: $(git -C "$REPO_DIR" rev-parse --short HEAD)"
 
 python3 "$REPO_DIR/scripts/repair-node-metadata.py"
+python3 "$REPO_DIR/scripts/expand-xray-inbounds.py"
 
 find "$BOT_DIR" -maxdepth 1 -type f -name '*.py' -delete
 cp -a "$REPO_DIR/bot/." "$BOT_DIR/"
@@ -65,9 +66,6 @@ if [ -z "$PUBLIC_IP" ]; then
   PUBLIC_IP="$(hostname -I | tr ' ' '\n' | grep -E '^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$' | head -1 || true)"
 fi
 
-# If ADMIN_IDS was not supplied as a secret yet, bootstrap the current owner only
-# when the production database contains exactly one Telegram user. This avoids a
-# public hard-coded Telegram ID and remains safe for the existing single-owner setup.
 CURRENT_ADMIN_IDS="$(awk -F= '$1=="ADMIN_IDS" {print $2; exit}' "$ENV_FILE" 2>/dev/null || true)"
 if [ -z "$CURRENT_ADMIN_IDS" ] && [ -s /opt/ferixdi/data/bot.db ]; then
   CURRENT_ADMIN_IDS="$(python3 - <<'PY'
@@ -168,6 +166,9 @@ net.ipv4.tcp_slow_start_after_idle=0
 EOF
 sysctl --system >/dev/null 2>&1 || true
 
+for port in 443 8443 9443 10443 11443 12443 13443 14443 15443 17443; do
+  ufw allow "${port}/tcp" || true
+done
 ufw allow 8080/tcp || true
 systemctl daemon-reload
 systemctl enable ferixdi-bot.service
