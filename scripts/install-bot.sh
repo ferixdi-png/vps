@@ -38,6 +38,7 @@ cp -a "$REPO_DIR/bot/." "$BOT_DIR/"
 python3 "$REPO_DIR/scripts/patch-bot-runtime.py" "$BOT_DIR/main.py"
 python3 "$REPO_DIR/scripts/patch-bot-hardening.py" "$BOT_DIR/main.py"
 python3 "$REPO_DIR/scripts/patch-bot-edge.py" "$BOT_DIR/main.py"
+python3 "$REPO_DIR/scripts/patch-bot-admin.py" "$BOT_DIR/main.py"
 python3 -m py_compile "$BOT_DIR/main.py"
 
 if [ ! -x "$BOT_DIR/.venv/bin/python" ]; then
@@ -62,6 +63,28 @@ set_env() {
 PUBLIC_IP="$(awk -F= '$1=="IP" && length($2)>0 {print $2; exit}' /root/FERIXDI-NODE-INFO.txt 2>/dev/null || true)"
 if [ -z "$PUBLIC_IP" ]; then
   PUBLIC_IP="$(hostname -I | tr ' ' '\n' | grep -E '^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$' | head -1 || true)"
+fi
+
+# If ADMIN_IDS was not supplied as a secret yet, bootstrap the current owner only
+# when the production database contains exactly one Telegram user. This avoids a
+# public hard-coded Telegram ID and remains safe for the existing single-owner setup.
+CURRENT_ADMIN_IDS="$(awk -F= '$1=="ADMIN_IDS" {print $2; exit}' "$ENV_FILE" 2>/dev/null || true)"
+if [ -z "$CURRENT_ADMIN_IDS" ] && [ -s /opt/ferixdi/data/bot.db ]; then
+  CURRENT_ADMIN_IDS="$(python3 - <<'PY'
+import sqlite3
+p='/opt/ferixdi/data/bot.db'
+try:
+    con=sqlite3.connect(p)
+    rows=con.execute('SELECT telegram_id FROM users ORDER BY created_at').fetchall()
+    if len(rows)==1:
+        print(rows[0][0])
+except Exception:
+    pass
+PY
+)"
+fi
+if [ -n "$CURRENT_ADMIN_IDS" ]; then
+  set_env ADMIN_IDS "$CURRENT_ADMIN_IDS"
 fi
 
 set_env TRIAL_DAYS 3
@@ -108,8 +131,6 @@ KillSignal=SIGTERM
 WantedBy=multi-user.target
 UNIT
 
-# Self-healing watchdog. It verifies bot readiness, Xray state, real subscription
-# rendering, DB/Xray consistency, listening ports and low-disk conditions.
 install -m 0755 "$REPO_DIR/scripts/ferixdi-healthcheck.sh" /usr/local/sbin/ferixdi-healthcheck
 cat > /etc/systemd/system/ferixdi-healthcheck.service <<'UNIT'
 [Unit]
@@ -134,9 +155,6 @@ Persistent=true
 WantedBy=timers.target
 UNIT
 
-# Network tuning: BBR/fq improves queueing under load; MTU probing helps broken
-# paths; TCP Fast Open and a larger listen backlog reduce connection setup cost.
-# These cannot remove geographic RTT but improve responsiveness and resilience.
 cat > /etc/sysctl.d/99-ferixdi-network.conf <<'EOF'
 net.core.default_qdisc=fq
 net.core.somaxconn=4096
