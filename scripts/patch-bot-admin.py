@@ -122,5 +122,51 @@ async def reissue(c: CallbackQuery):
 '''
 s=s.replace(insert_at, handler+insert_at, 1)
 
+old_status='''    if is_active(row):
+        exp = parse_exp(row)
+        left = exp - utcnow()
+        hours = max(0, int(left.total_seconds() // 3600))
+        days, rem_hours = divmod(hours, 24)
+        await c.message.answer(
+            f"🟢 <b>Доступ активен</b>\\n"
+            f"Тариф: {plan_name(row)}\\n"
+            f"До: {expiry_text(row)}\\n"
+            f"Осталось: {days} дн. {rem_hours} ч.",
+            parse_mode="HTML",
+            reply_markup=menu(),
+        )
+'''
+new_status='''    if is_active(row):
+        if is_admin_row(row):
+            await c.message.answer(
+                "🟢 <b>Доступ активен</b>\\nТариф: Администратор · Безлимит\\nСрок: <b>Безлимит</b>",
+                parse_mode="HTML", reply_markup=menu())
+        else:
+            exp = parse_exp(row)
+            left = exp - utcnow()
+            hours = max(0, int(left.total_seconds() // 3600))
+            days, rem_hours = divmod(hours, 24)
+            await c.message.answer(
+                f"🟢 <b>Доступ активен</b>\\n"
+                f"Тариф: {plan_name(row)}\\n"
+                f"До: {expiry_text(row)}\\n"
+                f"Осталось: {days} дн. {rem_hours} ч.",
+                parse_mode="HTML",
+                reply_markup=menu(),
+            )
+'''
+replace_once(old_status, new_status, 'admin status')
+
+replace_once(
+'''    exp = parse_exp(row)
+    expire_unix = int(exp.timestamp()) if exp else 0
+    headers = {
+''',
+'''    exp = parse_exp(row)
+    expire_unix = 0 if is_admin_row(row) else (int(exp.timestamp()) if exp else 0)
+    headers = {
+''',
+'admin subscription expiry')
+
 path.write_text(s)
 print(f"admin patched {path}")
