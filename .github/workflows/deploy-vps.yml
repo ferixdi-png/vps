@@ -74,10 +74,12 @@ jobs:
 
           sudo python3 -m json.tool /opt/ferixdi/node/xray-config.json >/dev/null
           sudo test -s /root/FERIXDI-NODE-INFO.txt
-          sudo grep -q '^PUBLIC_KEY=' /root/FERIXDI-NODE-INFO.txt
-          sudo grep -q '^SHORT_ID=' /root/FERIXDI-NODE-INFO.txt
+          sudo grep -q '^PUBLIC_KEY=.' /root/FERIXDI-NODE-INFO.txt
+          sudo grep -q '^SHORT_ID=.' /root/FERIXDI-NODE-INFO.txt
+
+          set +e
           sudo python3 - <<'PY'
-          import base64, sqlite3, urllib.request
+          import base64, sqlite3, urllib.request, urllib.error
           db = '/opt/ferixdi/data/bot.db'
           con = sqlite3.connect(db)
           check = con.execute('PRAGMA quick_check').fetchone()[0]
@@ -88,14 +90,25 @@ jobs:
           print(f'DB OK: users={total}, enabled={active}')
           if row:
               token = row[0]
-              raw = urllib.request.urlopen(f'http://127.0.0.1:8080/sub/{token}', timeout=5).read()
-              decoded = base64.b64decode(raw).decode()
+              try:
+                  raw = urllib.request.urlopen(f'http://127.0.0.1:8080/sub/{token}', timeout=5).read()
+              except urllib.error.HTTPError as e:
+                  print(f'SUBSCRIPTION HTTP ERROR: {e.code} {e.read().decode(errors="replace")}')
+                  raise
+              decoded = base64.b64decode(raw, validate=True).decode()
               profiles = [x for x in decoded.splitlines() if x.startswith('vless://')]
               assert profiles, 'active subscription rendered no VLESS profiles'
               print(f'SUBSCRIPTION OK: profiles={len(profiles)}')
           else:
               print('SUBSCRIPTION TEST SKIPPED: no enabled user')
           PY
+          audit_rc=$?
+          set -e
 
           echo '--- recent bot errors/warnings ---'
-          sudo journalctl -u ferixdi-bot --since '15 minutes ago' --no-pager | grep -Ei 'error|exception|failed|warning' || true
+          sudo journalctl -u ferixdi-bot --since '15 minutes ago' --no-pager | grep -Ei 'error|exception|failed|warning|subscription render' || true
+          if [ "$audit_rc" -ne 0 ]; then
+            echo '--- bot journal tail ---'
+            sudo journalctl -u ferixdi-bot --no-pager -n 80 || true
+            exit "$audit_rc"
+          fi
