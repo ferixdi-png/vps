@@ -5,11 +5,11 @@ import re, sys
 path = Path(sys.argv[1] if len(sys.argv) > 1 else '/opt/ferixdi/bot/main.py')
 s = path.read_text()
 
-# Public Happ subscription is HTTPS on the VPS public 8080 socket. The bot
-# itself stays on loopback:8080 so existing health checks continue to work.
+# Public Happ subscription is HTTPS on 9443. The bot itself stays on
+# loopback:8080 so health checks and the reverse proxy remain separate.
 sub_decl = 'SUB_PORT = int(os.getenv("SUB_PORT", "8080"))\n'
 if sub_decl in s and 'HTTP_PORT = 8080\n' not in s:
-    s = s.replace(sub_decl, sub_decl + 'HTTP_PORT = 8080\nPUBLIC_SUB_PORT = 8080\n', 1)
+    s = s.replace(sub_decl, sub_decl + 'HTTP_PORT = 8080\nPUBLIC_SUB_PORT = 9443\n', 1)
 
 old_port = '    port = "" if (PUBLIC_SCHEME == "https" and SUB_PORT == 443) else f":{SUB_PORT}"\n'
 if old_port in s:
