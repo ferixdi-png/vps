@@ -92,7 +92,7 @@ jobs:
             fi
           done
 
-          grep -q '^TRIAL_DAYS=1$' /opt/ferixdi/.env
+          sudo grep -q '^TRIAL_DAYS=1$' /opt/ferixdi/.env
           grep -q '24 часа бесплатно' /opt/ferixdi/bot/main.py
           grep -q '24 часа теста закончились' /opt/ferixdi/bot/main.py
           grep -q 'Половина тестового дня уже прошла' /opt/ferixdi/bot/main.py
