@@ -1,12 +1,11 @@
 #!/usr/bin/env python3
 from pathlib import Path
 import re, sys
-from urllib.parse import urlsplit, urlunsplit
 
 path = Path(sys.argv[1] if len(sys.argv) > 1 else '/opt/ferixdi/bot/main.py')
 s = path.read_text()
 
-helper = '''\n\ndef compact_key_for_copy(link: str):\n    # Telegram CopyTextButton accepts at most 256 chars. Our full VLESS link has\n    # a long percent-encoded display name after # which Happ does not need.\n    # Remove only the fragment; connection parameters remain unchanged.\n    p = urlsplit(link)\n    compact = urlunsplit((p.scheme, p.netloc, p.path, p.query, ""))\n    if len(compact) > 256:\n        raise RuntimeError(f"compact key too long: {len(compact)}")\n    return compact\n\n\ndef key_copy_keyboard(link: str):\n    compact = compact_key_for_copy(link)\n    return InlineKeyboardMarkup(\n        inline_keyboard=[\n            [InlineKeyboardButton(text="📋 Скопировать ключ", copy_text=CopyTextButton(text=compact))],\n            [InlineKeyboardButton(text="📱 Как вставить в Happ", callback_data="help")],\n            [InlineKeyboardButton(text="💬 Поддержка", url=SUPPORT_URL)],\n        ]\n    )\n'''
+helper = '''\n\ndef compact_key_for_copy(link: str):\n    # Telegram CopyTextButton accepts at most 256 chars. The long human-readable\n    # profile name after # is optional for Happ, so remove only that fragment.\n    compact = link.split("#", 1)[0]\n    if len(compact) > 256:\n        raise RuntimeError(f"compact key too long: {len(compact)}")\n    return compact\n\n\ndef key_copy_keyboard(link: str):\n    compact = compact_key_for_copy(link)\n    return InlineKeyboardMarkup(\n        inline_keyboard=[\n            [InlineKeyboardButton(text="📋 Скопировать ключ", copy_text=CopyTextButton(text=compact))],\n            [InlineKeyboardButton(text="📱 Как вставить в Happ", callback_data="help")],\n            [InlineKeyboardButton(text="💬 Поддержка", url=SUPPORT_URL)],\n        ]\n    )\n'''
 
 key_start = s.find('@dp.callback_query(F.data == "key")')
 status_start = s.find('@dp.callback_query(F.data == "status")', key_start)
