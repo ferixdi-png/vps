@@ -52,6 +52,20 @@ jobs:
       - name: Verify bot and VPN node
         shell: bash
         run: |
-          sudo systemctl is-active ferixdi-bot
+          set -e
           sudo docker ps --format '{{.Names}} {{.Status}}' | grep ferixdi-xray
-          curl -fsS http://127.0.0.1:8080/health
+
+          for i in $(seq 1 20); do
+            if sudo systemctl is-active --quiet ferixdi-bot && curl -fsS http://127.0.0.1:8080/health; then
+              echo
+              echo 'FERIXDI BOT HEALTHY'
+              exit 0
+            fi
+            sleep 2
+          done
+
+          echo 'Health check failed. Diagnostics:'
+          sudo systemctl --no-pager --full status ferixdi-bot || true
+          sudo journalctl -u ferixdi-bot --no-pager -n 120 || true
+          sudo ss -lntp | grep -E ':(8080|443|8443|12443|13443|17443)\b' || true
+          exit 1
