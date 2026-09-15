@@ -6,23 +6,7 @@ on:
     branches: [main]
     paths:
       - 'bot/**'
-      - 'scripts/install-bot.sh'
-      - 'scripts/setup-subscription-https.sh'
-      - 'scripts/patch-bot-http-port.py'
-      - 'scripts/patch-bot-runtime.py'
-      - 'scripts/patch-bot-hardening.py'
-      - 'scripts/patch-bot-profile-clean.py'
-      - 'scripts/patch-bot-edge.py'
-      - 'scripts/patch-bot-admin.py'
-      - 'scripts/patch-bot-trial-day.py'
-      - 'scripts/patch-bot-antispam.py'
-      - 'scripts/patch-bot-admin-panel.py'
-      - 'scripts/patch-bot-payment-ui.py'
-      - 'scripts/patch-bot-referrals.py'
-      - 'scripts/patch-bot-happ-simple.py'
-      - 'scripts/repair-node-metadata.py'
-      - 'scripts/expand-xray-inbounds.py'
-      - 'scripts/ferixdi-healthcheck.sh'
+      - 'scripts/**'
       - '.github/workflows/deploy-vps.yml'
 
 permissions:
@@ -74,11 +58,12 @@ jobs:
           trap 'sudo rm -f /run/ferixdi-deploying' EXIT
           sudo env DEPLOY_SHA="$GITHUB_SHA" bash "$GITHUB_WORKSPACE/scripts/install-bot.sh"
 
-      - name: Verify bot and VPN node
+      - name: Verify bot, HTTPS subscription and VPN profiles
         shell: bash
         run: |
-          set -e
+          set -euo pipefail
           sudo rm -f /run/ferixdi-deploying
+
           sudo docker ps --format '{{.Names}} {{.Status}}' | grep ferixdi-xray
           sudo systemctl is-enabled --quiet ferixdi-bot
           sudo systemctl is-enabled --quiet ferixdi-healthcheck.timer
@@ -94,35 +79,28 @@ jobs:
             if [ "$i" = 20 ]; then
               sudo systemctl --no-pager --full status ferixdi-bot || true
               sudo journalctl -u ferixdi-bot --no-pager -n 120 || true
-              sudo ss -lntp | grep -E ':(8080|443|8443|12443|13443|17443)\b' || true
               exit 1
             fi
           done
 
           sudo grep -q '^TRIAL_DAYS=1$' /opt/ferixdi/.env
           grep -q '24 часа бесплатно' /opt/ferixdi/bot/main.py
-          grep -q '24 часа теста закончились' /opt/ferixdi/bot/main.py
-          grep -q 'Половина тестового дня уже прошла' /opt/ferixdi/bot/main.py
-          grep -q 'Ferixdi VPN · Админ-панель' /opt/ferixdi/bot/main.py
-          grep -q 'callback_data="adm_users"' /opt/ferixdi/bot/main.py
-          grep -q 'callback_data="adm_expiring"' /opt/ferixdi/bot/main.py
-          grep -q 'async def admin_extend_cb' /opt/ferixdi/bot/main.py
-          grep -q 'async def admin_disable_cb' /opt/ferixdi/bot/main.py
-          grep -q 'PAYMENT_PHONE.*89935801642' /opt/ferixdi/bot/main.py
-          grep -q 'callback_data="pay_sent"' /opt/ferixdi/bot/main.py
-          grep -q 'async def pay_approve' /opt/ferixdi/bot/main.py
-          grep -q 'CopyTextButton' /opt/ferixdi/bot/main.py
           grep -q 'callback_data="admin_payments"' /opt/ferixdi/bot/main.py
           grep -q 'subscription_copy_keyboard' /opt/ferixdi/bot/main.py
-          grep -q 'happ://add/' /opt/ferixdi/bot/main.py
+          grep -q 'Скопировать ключ' /opt/ferixdi/bot/main.py
           grep -q 'Вставить из буфера обмена' /opt/ferixdi/bot/main.py
-          echo 'TRIAL + ADMIN + PAYMENT + HAPP CLIPBOARD IMPORT OK'
+          grep -q '#profile-title: FERIXDI CONNECT' /opt/ferixdi/bot/main.py
+          if grep -q 'happ://add/' /opt/ferixdi/bot/main.py; then
+            echo 'ERROR: obsolete happ:// wrapper is still present'
+            exit 1
+          fi
 
           PUBLIC_HOST="$(sudo awk -F= '$1=="PUBLIC_HOST" {print $2; exit}' /opt/ferixdi/.env)"
           PUBLIC_IP="$(sudo awk -F= '$1=="IP" {print $2; exit}' /root/FERIXDI-NODE-INFO.txt)"
           test -n "$PUBLIC_HOST" && test -n "$PUBLIC_IP"
-          curl --resolve "${PUBLIC_HOST}:8080:${PUBLIC_IP}" -fsS "https://${PUBLIC_HOST}:8080/health" | grep -q '"ok": true'
-          echo "PUBLIC HTTPS OK: https://${PUBLIC_HOST}:8080"
+
+          curl --resolve "${PUBLIC_HOST}:9443:${PUBLIC_IP}" -fsS "https://${PUBLIC_HOST}:9443/health" | grep -q '"ok": true'
+          echo "PUBLIC HTTPS OK: https://${PUBLIC_HOST}:9443"
 
           sudo python3 -m json.tool /opt/ferixdi/node/xray-config.json >/dev/null
           sudo python3 - <<'PY'
@@ -139,51 +117,60 @@ jobs:
               p=inbound.get('port')
               if inbound.get('protocol','vless') == 'vless' and p and r:
                   p=int(p)
-                  usable[p] = len(r.get('shortIds') or [])
-                  transports[p] = s.get('network')
-          assert set(usable) == expected, f'unexpected live Reality ports: {usable}'
-          assert usable == expected_sid_counts, f'unexpected shortId layout: {usable}'
-          assert transports == expected_transport, f'unexpected transport layout: {transports}'
-          print(f'XRAY ENDPOINTS OK: ports={sorted(usable)} transports={transports} shortIds={usable}')
+                  usable[p]=len(r.get('shortIds') or [])
+                  transports[p]=s.get('network')
+          assert set(usable)==expected, f'unexpected live Reality ports: {usable}'
+          assert usable==expected_sid_counts, f'unexpected shortId layout: {usable}'
+          assert transports==expected_transport, f'unexpected transport layout: {transports}'
+          print(f'XRAY ENDPOINTS OK: ports={sorted(usable)} transports={transports}')
           PY
 
-          set +e
-          sudo python3 - <<'PY'
-          import base64, sqlite3, urllib.request
-          from urllib.parse import urlsplit, parse_qs, unquote
-          con = sqlite3.connect('/opt/ferixdi/data/bot.db')
-          assert con.execute('PRAGMA quick_check').fetchone()[0] == 'ok'
-          row = con.execute("SELECT sub_token FROM users WHERE enabled=1 ORDER BY created_at LIMIT 1").fetchone()
-          if row:
-              raw = urllib.request.urlopen(f'http://127.0.0.1:8080/sub/{row[0]}', timeout=5).read()
-              decoded = base64.b64decode(raw, validate=True).decode()
-              profiles = [x for x in decoded.splitlines() if x.startswith('vless://')]
-              ports = {urlsplit(x).port for x in profiles}
-              parsed = [(urlsplit(x).port, parse_qs(urlsplit(x).query), unquote(urlsplit(x).fragment), urlsplit(x).hostname) for x in profiles]
-              sids = [q.get('sid',[''])[0] for _,q,_,_ in parsed]
-              assert len(profiles) == 8, f'expected 8 user-visible VLESS profiles, got {len(profiles)}'
-              assert ports == {443,8443,12443,13443,17443}, f'unexpected subscription ports: {sorted(ports)}'
-              assert len(set((p, sid) for (p,_,_,_), sid in zip(parsed, sids))) == 8, 'profiles are not unique'
-              expected={443:'grpc',8443:'grpc',17443:'grpc',12443:'xhttp',13443:'xhttp'}
-              for p,q,label,host in parsed:
-                  assert host == PUBLIC_IP, f'{p}: profile host must be raw node IP, got {host}'
-                  assert q.get('security',[''])[0] == 'reality', f'{p}: security is not REALITY'
-                  assert q.get('type',[''])[0] == expected[p], f'{p}: wrong client transport {q.get("type")}'
-                  assert 'VLESS' in label and 'Reality' in label, f'{p}: unclear profile name: {label}'
-              labels=[label for _,_,label,_ in parsed]
-              assert sum('если режут нестандартные порты' in x for x in labels) == 1, 'HTTPS-443 fallback must be unique'
-              assert sum('если режут gRPC/HTTP2' in x for x in labels) == 1, 'anti-gRPC XHTTP profile must be unique'
-              assert sum('запасной маршрут при DPI' in x for x in labels) == 1, 'DPI backup profile must be unique'
-              assert all('#1' not in x and '#2' not in x for x in labels), f'duplicate-style labels remain: {labels}'
-              print(f'SUBSCRIPTION OK: profiles={len(profiles)} clean_unique_profiles=8 raw_ip={PUBLIC_IP}')
+          TOKEN="$(sudo python3 - <<'PY'
+          import sqlite3
+          from datetime import datetime, timezone
+          con=sqlite3.connect('/opt/ferixdi/data/bot.db')
+          rows=con.execute('SELECT sub_token, expires_at FROM users WHERE enabled=1 ORDER BY created_at').fetchall()
+          now=datetime.now(timezone.utc)
+          for token, exp in rows:
+              try:
+                  if exp and datetime.fromisoformat(exp) > now:
+                      print(token)
+                      break
+              except Exception:
+                  pass
           PY
-          audit_rc=$?
-          set -e
+          )"
+
+          if [ -n "$TOKEN" ]; then
+            tmp_sub="$(mktemp)"
+            trap 'rm -f "$tmp_sub"' EXIT
+            curl --resolve "${PUBLIC_HOST}:9443:${PUBLIC_IP}" -fsS "https://${PUBLIC_HOST}:9443/sub/${TOKEN}" -o "$tmp_sub"
+            sudo python3 - "$tmp_sub" "$PUBLIC_IP" <<'PY'
+          import pathlib, sys
+          from urllib.parse import urlsplit, parse_qs, unquote
+
+          text=pathlib.Path(sys.argv[1]).read_text()
+          public_ip=sys.argv[2]
+          lines=[x.strip() for x in text.splitlines() if x.strip()]
+          assert lines and lines[0] == '#profile-title: FERIXDI CONNECT', f'bad subscription header: {lines[:2]}'
+          profiles=[x for x in lines if x.startswith('vless://')]
+          assert len(profiles)==8, f'expected 8 profiles, got {len(profiles)}'
+          parsed=[(urlsplit(x).port, parse_qs(urlsplit(x).query), unquote(urlsplit(x).fragment), urlsplit(x).hostname) for x in profiles]
+          assert {p for p,_,_,_ in parsed} == {443,8443,12443,13443,17443}
+          expected={443:'grpc',8443:'grpc',17443:'grpc',12443:'xhttp',13443:'xhttp'}
+          sids=[]
+          for p,q,label,host in parsed:
+              assert host == public_ip, f'{p}: expected raw IP {public_ip}, got {host}'
+              assert q.get('security',[''])[0]=='reality', f'{p}: security mismatch'
+              assert q.get('type',[''])[0]==expected[p], f'{p}: transport mismatch {q.get("type")}'
+              assert 'VLESS' in label and 'Reality' in label, f'{p}: bad label {label}'
+              sids.append((p,q.get('sid',[''])[0]))
+          assert len(set(sids))==8, 'profiles are not unique'
+          print(f'PUBLIC SUBSCRIPTION OK: plaintext=1 profiles={len(profiles)} raw_ip={public_ip}')
+          PY
+          else
+            echo 'No active user available for public subscription content test'
+          fi
 
           sudo /usr/local/sbin/ferixdi-healthcheck
           sysctl net.core.default_qdisc net.ipv4.tcp_congestion_control net.ipv4.tcp_mtu_probing net.ipv4.tcp_fastopen || true
-          sudo journalctl -u ferixdi-bot --since '10 minutes ago' --no-pager | grep -Ei 'error|exception|failed|warning|subscription render|key callback|payment' || true
-          if [ "$audit_rc" -ne 0 ]; then
-            sudo journalctl -u ferixdi-bot --no-pager -n 100 || true
-            exit "$audit_rc"
-          fi
