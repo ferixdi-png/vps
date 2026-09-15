@@ -11,21 +11,30 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
-      - name: Apply runtime patches and inspect
+      - name: Apply runtime patches one by one
         shell: bash
         run: |
           set -u
           cp bot/main.py /tmp/main.py
-          python3 scripts/patch-bot-runtime.py /tmp/main.py
-          python3 scripts/patch-bot-hardening.py /tmp/main.py
-          python3 scripts/patch-bot-profile-clean.py /tmp/main.py
-          python3 scripts/patch-bot-edge.py /tmp/main.py
-          python3 scripts/patch-bot-admin.py /tmp/main.py
-          python3 scripts/patch-bot-trial-day.py /tmp/main.py
-          python3 scripts/patch-bot-antispam.py /tmp/main.py
-          python3 scripts/patch-bot-admin-panel.py /tmp/main.py
-          if ! python3 -m py_compile /tmp/main.py; then
-            nl -ba /tmp/main.py | sed -n '820,875p'
-            exit 1
-          fi
+          python3 -m py_compile /tmp/main.py
+          for patch in \
+            scripts/patch-bot-runtime.py \
+            scripts/patch-bot-hardening.py \
+            scripts/patch-bot-profile-clean.py \
+            scripts/patch-bot-edge.py \
+            scripts/patch-bot-admin.py \
+            scripts/patch-bot-trial-day.py \
+            scripts/patch-bot-antispam.py \
+            scripts/patch-bot-admin-panel.py; do
+              echo "=== $patch ==="
+              python3 "$patch" /tmp/main.py
+              if ! python3 -m py_compile /tmp/main.py; then
+                echo "BROKE AFTER $patch"
+                n=$(grep -n 'async def admin_payments' /tmp/main.py | head -1 | cut -d: -f1 || true)
+                if [ -n "$n" ]; then
+                  a=$((n-10)); b=$((n+35)); nl -ba /tmp/main.py | sed -n "${a},${b}p"
+                fi
+                exit 1
+              fi
+          done
           echo OK
