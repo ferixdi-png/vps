@@ -22,9 +22,8 @@ def active_users():
         return [r for r in con.execute("SELECT * FROM users WHERE enabled=1").fetchall() if is_active(r)]
 ''',
 '''def recover_admin_ids():
-    # ADMIN_IDS may be absent from GitHub Secrets while the production DB already
-    # contains the original owner. Recover the earliest bot user so admin commands
-    # never silently disappear after a deploy. An explicit ADMIN_IDS value always wins.
+    # If ADMIN_IDS was accidentally omitted from deployment secrets, recover the
+    # original owner from the existing production database. An explicit value wins.
     if ADMIN_IDS:
         return
     try:
@@ -141,51 +140,40 @@ async def reissue(c: CallbackQuery):
 '''
 s=s.replace(insert_at, handler+insert_at, 1)
 
-old_status='''    if is_active(row):
-        exp = parse_exp(row)
-        left = exp - utcnow()
-        hours = max(0, int(left.total_seconds() // 3600))
-        days, rem_hours = divmod(hours, 24)
+# Do not rewrite the whole status handler: earlier hardening patches may add an
+# early callback acknowledgement. Inject the admin fast-path after row lookup.
+status_anchor='''    row = get_user(c.from_user.id)
+    if is_active(row):
+'''
+status_pos = s.find('@dp.callback_query(F.data == "status")')
+help_pos = s.find('@dp.callback_query(F.data == "help")', status_pos)
+if status_pos < 0 or help_pos < 0:
+    raise SystemExit('admin patch: status section missing')
+status_section = s[status_pos:help_pos]
+if status_section.count(status_anchor) != 1:
+    raise SystemExit(f'admin patch status anchor: expected 1 match, found {status_section.count(status_anchor)}')
+status_repl='''    row = get_user(c.from_user.id)
+    if is_admin_row(row):
         await c.message.answer(
-            f"🟢 <b>Доступ активен</b>\n"
-            f"Тариф: {plan_name(row)}\n"
-            f"До: {expiry_text(row)}\n"
-            f"Осталось: {days} дн. {rem_hours} ч.",
-            parse_mode="HTML",
-            reply_markup=menu(),
-        )
+            "🟢 <b>Доступ активен</b>\nТариф: Администратор · Безлимит\nСрок: <b>Безлимит</b>",
+            parse_mode="HTML", reply_markup=menu())
+        return
+    if is_active(row):
 '''
-new_status='''    if is_active(row):
-        if is_admin_row(row):
-            await c.message.answer(
-                "🟢 <b>Доступ активен</b>\nТариф: Администратор · Безлимит\nСрок: <b>Безлимит</b>",
-                parse_mode="HTML", reply_markup=menu())
-        else:
-            exp = parse_exp(row)
-            left = exp - utcnow()
-            hours = max(0, int(left.total_seconds() // 3600))
-            days, rem_hours = divmod(hours, 24)
-            await c.message.answer(
-                f"🟢 <b>Доступ активен</b>\n"
-                f"Тариф: {plan_name(row)}\n"
-                f"До: {expiry_text(row)}\n"
-                f"Осталось: {days} дн. {rem_hours} ч.",
-                parse_mode="HTML",
-                reply_markup=menu(),
-            )
-'''
-replace_once(old_status, new_status, 'admin status')
+status_section = status_section.replace(status_anchor, status_repl, 1)
+s = s[:status_pos] + status_section + s[help_pos:]
 
-replace_once(
-'''    exp = parse_exp(row)
+# Subscription expiry is unlimited for admin. Apply against the single response
+# rendering site after edge hardening.
+sub_old='''    exp = parse_exp(row)
     expire_unix = int(exp.timestamp()) if exp else 0
     headers = {
-''',
-'''    exp = parse_exp(row)
+'''
+sub_new='''    exp = parse_exp(row)
     expire_unix = 0 if is_admin_row(row) else (int(exp.timestamp()) if exp else 0)
     headers = {
-''',
-'admin subscription expiry')
+'''
+replace_once(sub_old, sub_new, 'admin subscription expiry')
 
 path.write_text(s)
 print(f"admin patched {path}")
