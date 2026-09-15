@@ -31,11 +31,8 @@ fi
 
 echo "Deploying commit: $(git -C "$REPO_DIR" rev-parse --short HEAD)"
 
-# Repair client-facing Reality metadata from the live Xray private key before
-# the bot starts. No private key is written outside the Xray config.
 python3 "$REPO_DIR/scripts/repair-node-metadata.py"
 
-# Preserve the virtualenv between deploys; refresh only application source.
 find "$BOT_DIR" -maxdepth 1 -type f -name '*.py' -delete
 cp -a "$REPO_DIR/bot/." "$BOT_DIR/"
 python3 "$REPO_DIR/scripts/patch-bot-runtime.py" "$BOT_DIR/main.py"
@@ -109,9 +106,47 @@ KillSignal=SIGTERM
 WantedBy=multi-user.target
 UNIT
 
+# Self-healing watchdog. It verifies bot readiness, Xray state, config JSON and
+# low-disk conditions independently of the Telegram process.
+install -m 0755 "$REPO_DIR/scripts/ferixdi-healthcheck.sh" /usr/local/sbin/ferixdi-healthcheck
+cat > /etc/systemd/system/ferixdi-healthcheck.service <<'UNIT'
+[Unit]
+Description=Ferixdi VPN health check
+After=network-online.target docker.service ferixdi-bot.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/ferixdi-healthcheck
+UNIT
+cat > /etc/systemd/system/ferixdi-healthcheck.timer <<'UNIT'
+[Unit]
+Description=Run Ferixdi VPN health check every minute
+
+[Timer]
+OnBootSec=90s
+OnUnitActiveSec=60s
+AccuracySec=10s
+Persistent=true
+
+[Install]
+WantedBy=timers.target
+UNIT
+
+# Network tuning can improve throughput and queueing delay under load. It cannot
+# beat geographic propagation latency, but BBR+fq is a safe baseline for this VPS.
+cat > /etc/sysctl.d/99-ferixdi-network.conf <<'EOF'
+net.core.default_qdisc=fq
+net.ipv4.tcp_congestion_control=bbr
+net.ipv4.tcp_keepalive_time=120
+net.ipv4.tcp_keepalive_intvl=30
+net.ipv4.tcp_keepalive_probes=4
+EOF
+sysctl --system >/dev/null 2>&1 || true
+
 ufw allow 8080/tcp || true
 systemctl daemon-reload
 systemctl enable ferixdi-bot.service
+systemctl enable --now ferixdi-healthcheck.timer
 
 if ! grep -q '^BOT_TOKEN=.' "$ENV_FILE"; then
   echo 'BOT_TOKEN is not present in /opt/ferixdi/.env.'
@@ -126,8 +161,6 @@ if ! test -s /opt/ferixdi/node/xray-config.json; then
   exit 4
 fi
 
-# A clean DB backup before every deployment makes rollback independent of the
-# six-hour in-process backup loop.
 if [ -s /opt/ferixdi/data/bot.db ]; then
   cp -a /opt/ferixdi/data/bot.db "/opt/ferixdi/backups/predeploy-$(date -u +%Y%m%d-%H%M%S).db" || true
   find /opt/ferixdi/backups -type f -name 'predeploy-*.db' -printf '%T@ %p\n' 2>/dev/null | sort -nr | tail -n +8 | cut -d' ' -f2- | xargs -r rm -f
@@ -136,6 +169,7 @@ fi
 systemctl restart ferixdi-bot
 sleep 2
 systemctl --no-pager --full status ferixdi-bot || true
+systemctl --no-pager --full status ferixdi-healthcheck.timer || true
 
 echo
 echo 'FERIXDI BOT INSTALLED'
