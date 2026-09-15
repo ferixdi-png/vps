@@ -9,6 +9,7 @@ on:
       - 'scripts/install-bot.sh'
       - 'scripts/patch-bot-runtime.py'
       - 'scripts/patch-bot-hardening.py'
+      - 'scripts/patch-bot-edge.py'
       - 'scripts/repair-node-metadata.py'
       - 'scripts/ferixdi-healthcheck.sh'
       - '.github/workflows/deploy-vps.yml'
@@ -138,7 +139,7 @@ jobs:
           sudo /usr/local/sbin/ferixdi-healthcheck
 
           echo '--- network tuning ---'
-          sysctl net.core.default_qdisc net.ipv4.tcp_congestion_control || true
+          sysctl net.core.default_qdisc net.ipv4.tcp_congestion_control net.ipv4.tcp_mtu_probing net.ipv4.tcp_fastopen || true
 
           echo '--- recent bot errors/warnings ---'
           sudo journalctl -u ferixdi-bot --since '10 minutes ago' --no-pager | grep -Ei 'error|exception|failed|warning|subscription render|key callback' || true
