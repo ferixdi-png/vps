@@ -22,6 +22,24 @@ old_print = 'print(f"Ferixdi bot started; subscription port={SUB_PORT}", flush=T
 if old_print in s:
     s = s.replace(old_print, 'print(f"Ferixdi bot started; local_http={HTTP_PORT}; public_https={PUBLIC_SUB_PORT}", flush=True)', 1)
 
+# Final authority for client endpoints: the HTTPS hostname is only for
+# downloading the subscription. Every VLESS URI itself uses the raw VPS IP.
+profile_start = s.find('def profile_links(row):\n')
+profile_end = s.find('\n\ndef subscription_url(row):', profile_start)
+if profile_start < 0 or profile_end < 0:
+    raise SystemExit('profile_links section not found')
+profile_block = s[profile_start:profile_end]
+profile_block, host_count = re.subn(
+    r'^    host = .*$',
+    '    host = info.get("IP")',
+    profile_block,
+    count=1,
+    flags=re.M,
+)
+if host_count != 1:
+    raise SystemExit(f'profile host finalization expected 1 assignment, found {host_count}')
+s = s[:profile_start] + profile_block + s[profile_end:]
+
 # Happ understands a plain-text standard subscription. Avoid wrapping the
 # body in base64 so clipboard URL import has the simplest possible path.
 old_body = '    body = base64.b64encode(("\\n".join(links) + "\\n").encode()).decode()\n'
@@ -29,6 +47,7 @@ new_body = '    body = "#profile-title: FERIXDI CONNECT\\n#profile-update-interv
 if old_body not in s:
     raise SystemExit('subscription response body not found')
 s = s.replace(old_body, new_body, 1)
+s = s.replace('"Profile-Title": "Ferixdi VPN • 8 режимов"', '"Profile-Title": "FERIXDI CONNECT"')
 s = s.replace('"Profile-Title": "Ferixdi VPN"', '"Profile-Title": "FERIXDI CONNECT"')
 
 helper = '''\n\ndef subscription_copy_keyboard(url: str):\n    # Happ's clipboard importer accepts the standard HTTPS subscription URL\n    # directly. Do not wrap it in an app-specific deep link.\n    if len(url) > 256:\n        raise RuntimeError(f"subscription URL too long: {len(url)}")\n    return InlineKeyboardMarkup(\n        inline_keyboard=[\n            [InlineKeyboardButton(text="📋 Скопировать ключ", copy_text=CopyTextButton(text=url))],\n            [InlineKeyboardButton(text="📱 Как добавить в Happ", callback_data="help")],\n            [InlineKeyboardButton(text="💬 Поддержка", url=SUPPORT_URL)],\n        ]\n    )\n'''
