@@ -34,7 +34,7 @@ jobs:
 
     steps:
       - name: Checkout exact commit
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           fetch-depth: 1
 
@@ -96,22 +96,27 @@ jobs:
           import json
           cfg=json.load(open('/opt/ferixdi/node/xray-config.json'))
           expected={443,8443,12443,13443,17443}
+          expected_transport={443:'grpc',8443:'grpc',17443:'grpc',12443:'xhttp',13443:'xhttp'}
           usable={}
+          transports={}
           for inbound in cfg.get('inbounds', []):
               s=inbound.get('streamSettings', {})
               r=s.get('realitySettings', {})
               p=inbound.get('port')
               if inbound.get('protocol','vless') == 'vless' and p and r:
-                  usable[int(p)] = len(r.get('shortIds') or [])
+                  p=int(p)
+                  usable[p] = len(r.get('shortIds') or [])
+                  transports[p] = s.get('network')
           assert set(usable) == expected, f'unexpected live Reality ports: {usable}'
           assert all(v >= 2 for v in usable.values()), f'each reachable port needs two shortIds: {usable}'
-          print(f'XRAY REACHABLE ENDPOINTS OK: ports={sorted(usable)} shortIds={usable}')
+          assert transports == expected_transport, f'unexpected transport layout: {transports}'
+          print(f'XRAY ENDPOINTS OK: ports={sorted(usable)} transports={transports} shortIds={usable}')
           PY
 
           set +e
           sudo python3 - <<'PY'
-          import base64, sqlite3, urllib.request, urllib.error
-          from urllib.parse import urlsplit, parse_qs
+          import base64, sqlite3, urllib.request
+          from urllib.parse import urlsplit, parse_qs, unquote
           con = sqlite3.connect('/opt/ferixdi/data/bot.db')
           assert con.execute('PRAGMA quick_check').fetchone()[0] == 'ok'
           row = con.execute("SELECT sub_token FROM users WHERE enabled=1 ORDER BY created_at LIMIT 1").fetchone()
@@ -120,11 +125,17 @@ jobs:
               decoded = base64.b64decode(raw, validate=True).decode()
               profiles = [x for x in decoded.splitlines() if x.startswith('vless://')]
               ports = {urlsplit(x).port for x in profiles}
-              sids = [parse_qs(urlsplit(x).query).get('sid',[''])[0] for x in profiles]
+              parsed = [(urlsplit(x).port, parse_qs(urlsplit(x).query), unquote(urlsplit(x).fragment)) for x in profiles]
+              sids = [q.get('sid',[''])[0] for _,q,_ in parsed]
               assert len(profiles) == 10, f'expected 10 reachable VLESS profiles, got {len(profiles)}'
               assert ports == {443,8443,12443,13443,17443}, f'unexpected subscription ports: {sorted(ports)}'
-              assert len(set((urlsplit(x).port, sid) for x, sid in zip(profiles, sids))) == 10, 'profiles are not unique'
-              print(f'SUBSCRIPTION OK: profiles={len(profiles)} reachable_ports={len(ports)}')
+              assert len(set((p, sid) for (p,_,_), sid in zip(parsed, sids))) == 10, 'profiles are not unique'
+              expected={443:'grpc',8443:'grpc',17443:'grpc',12443:'xhttp',13443:'xhttp'}
+              for p,q,label in parsed:
+                  assert q.get('security',[''])[0] == 'reality', f'{p}: security is not REALITY'
+                  assert q.get('type',[''])[0] == expected[p], f'{p}: wrong client transport {q.get("type")}'
+                  assert 'VLESS' in label and 'Reality' in label, f'{p}: unclear profile name: {label}'
+              print(f'SUBSCRIPTION OK: profiles={len(profiles)} transports=validated reachable_ports={len(ports)}')
           PY
           audit_rc=$?
           set -e
