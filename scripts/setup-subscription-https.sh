@@ -2,6 +2,8 @@
 set -euo pipefail
 
 HOST="${1:?usage: setup-subscription-https.sh HOST}"
+PUBLIC_IP="${HOST%.sslip.io}"
+PUBLIC_IP="${PUBLIC_IP//-/.}"
 CONF="/etc/nginx/sites-available/ferixdi-subscription"
 TLS_DIR="/etc/ferixdi/tls"
 ACME="/root/.acme.sh/acme.sh"
@@ -19,8 +21,8 @@ fi
 
 mkdir -p "$TLS_DIR"
 
-# Port 80 is blocked upstream on this VPS. Issue through TLS-ALPN on the
-# already reachable 443 instead. Xray is stopped only for the ACME handshake.
+# Port 80 is blocked upstream. Issue through TLS-ALPN on the already reachable
+# 443. Xray is paused only for the ACME handshake and immediately restored.
 if [ ! -s "$TLS_DIR/fullchain.pem" ] || ! openssl x509 -checkend 1209600 -noout -in "$TLS_DIR/fullchain.pem" >/dev/null 2>&1; then
   restore_xray() {
     docker start ferixdi-xray >/dev/null 2>&1 || true
@@ -39,13 +41,13 @@ if [ ! -s "$TLS_DIR/fullchain.pem" ] || ! openssl x509 -checkend 1209600 -noout 
     --reloadcmd 'nginx -t && systemctl reload nginx'
 fi
 
-# Free public 8080 for nginx. The Telegram bot is restarted later on 18080.
+# The old bot may still own 0.0.0.0:8080. Stop it briefly, then nginx takes
+# only the public-IP socket while the new bot will bind 127.0.0.1:8080.
 systemctl stop ferixdi-bot >/dev/null 2>&1 || true
 
 cat > "$CONF" <<EOF
 server {
-    listen 8080 ssl;
-    listen [::]:8080 ssl;
+    listen ${PUBLIC_IP}:8080 ssl;
     server_name ${HOST};
 
     ssl_certificate ${TLS_DIR}/fullchain.pem;
@@ -53,7 +55,7 @@ server {
     ssl_protocols TLSv1.2 TLSv1.3;
 
     location / {
-        proxy_pass http://127.0.0.1:18080;
+        proxy_pass http://127.0.0.1:8080;
         proxy_http_version 1.1;
         proxy_set_header Host \$host;
         proxy_set_header X-Real-IP \$remote_addr;
