@@ -1,0 +1,45 @@
+name: Verify Happ live
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths: ['.github/workflows/verify-happ-live.yml']
+permissions:
+  contents: read
+jobs:
+  verify:
+    runs-on: [self-hosted, linux, x64, ferixdi-vps]
+    steps:
+      - name: Verify public TLS, generated URL and subscription
+        shell: bash
+        run: |
+          set -euo pipefail
+          HOST="$(sudo awk -F= '$1=="PUBLIC_HOST" {print $2; exit}' /opt/ferixdi/.env)"
+          IP="$(sudo awk -F= '$1=="IP" {print $2; exit}' /root/FERIXDI-NODE-INFO.txt)"
+          echo "HOST=$HOST IP=$IP"
+          echo | openssl s_client -connect "${IP}:443" -servername "$HOST" -verify_hostname "$HOST" -verify_return_error 2>&1 | tee /tmp/ferixdi-tls.txt
+          grep -q 'Verify return code: 0 (ok)' /tmp/ferixdi-tls.txt
+          echo | openssl s_client -connect "${IP}:443" -servername "$HOST" 2>/dev/null | openssl x509 -noout -subject -issuer -dates -ext subjectAltName
+          curl --resolve "${HOST}:443:${IP}" --connect-timeout 5 --max-time 10 -fsS "https://${HOST}/health" | grep -q '"ok": true'
+          grep -q 'PUBLIC_SUB_PORT = 443' /opt/ferixdi/bot/main.py
+          ! grep -q 'PUBLIC_SUB_PORT = 9443' /opt/ferixdi/bot/main.py
+          TOKEN="$(sudo python3 - <<'PY'
+          import sqlite3
+          from datetime import datetime, timezone
+          con=sqlite3.connect('/opt/ferixdi/data/bot.db')
+          now=datetime.now(timezone.utc)
+          for token, exp in con.execute('SELECT sub_token, expires_at FROM users WHERE enabled=1 ORDER BY created_at'):
+              try:
+                  if exp and datetime.fromisoformat(exp) > now:
+                      print(token); break
+              except Exception:
+                  pass
+          PY
+          )"
+          test -n "$TOKEN"
+          URL="https://${HOST}/sub/${TOKEN}?rev=sni443-20260915"
+          echo "Public subscription URL shape: https://${HOST}/sub/<token>?rev=sni443-20260915"
+          curl --resolve "${HOST}:443:${IP}" --connect-timeout 5 --max-time 10 -fsS "$URL" -o /tmp/ferixdi-sub.txt
+          grep -q '^#profile-title: FERIXDI CONNECT' /tmp/ferixdi-sub.txt
+          test "$(grep -c '^vless://' /tmp/ferixdi-sub.txt)" = 8
+          echo 'HAPP LIVE CHECK OK: trusted TLS + standard 443 + 8 profiles'
