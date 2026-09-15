@@ -22,6 +22,10 @@ old_print = 'print(f"Ferixdi bot started; subscription port={SUB_PORT}", flush=T
 if old_print in s:
     s = s.replace(old_print, 'print(f"Ferixdi bot started; local_http={HTTP_PORT}; public_https={PUBLIC_SUB_PORT}", flush=True)', 1)
 
+# Brand the subscription clearly inside Happ so it cannot be confused with
+# old third-party subscriptions.
+s = s.replace('"Profile-Title": "Ferixdi VPN"', '"Profile-Title": "FERIXDI CONNECT"')
+
 helper = '''\n\ndef subscription_copy_keyboard(url: str):\n    if len(url) > 256:\n        raise RuntimeError(f"subscription URL too long: {len(url)}")\n    return InlineKeyboardMarkup(\n        inline_keyboard=[\n            [InlineKeyboardButton(text="📋 Скопировать подписку", copy_text=CopyTextButton(text=url))],\n            [InlineKeyboardButton(text="📱 Как добавить в Happ", callback_data="help")],\n            [InlineKeyboardButton(text="💬 Поддержка", url=SUPPORT_URL)],\n        ]\n    )\n'''
 
 key_start = s.find('@dp.callback_query(F.data == "key")')
@@ -47,7 +51,7 @@ m = re.search(r'async def key\(c: CallbackQuery\):\n(    if await reject_callbac
 if m and m.group(1):
     rate_line = m.group(1)
 
-new_key = '''@dp.callback_query(F.data == "key")\nasync def key(c: CallbackQuery):\n''' + rate_line + '''    await c.answer("Готовлю подписку…")\n    try:\n        ensure_user(c.from_user)\n        row = get_user(c.from_user.id)\n        if not is_active(row):\n            await c.message.answer(\n                "🔴 Доступ сейчас не активен. Активируй тест или продли подписку.",\n                reply_markup=menu(),\n            )\n            return\n        url = subscription_url(row)\n        if not url or not url.startswith("https://"):\n            raise RuntimeError("secure subscription URL is not configured")\n        await c.message.answer(\n            "🔑 <b>Подписка готова</b>\\n\\n"\n            "В ней сразу <b>8 профилей Ferixdi</b>, как на компьютере.\\n\\n"\n            "1. Нажми <b>«📋 Скопировать подписку»</b>.\\n"\n            "2. Открой Happ и нажми <b>+</b>.\\n"\n            "3. Выбери <b>«URL подписки»</b>.\\n"\n            "4. Вставь ссылку и сохрани.\\n\\n"\n            "Готово — в Happ появятся все 8 профилей.",\n            parse_mode="HTML",\n            reply_markup=subscription_copy_keyboard(url),\n        )\n    except Exception as e:\n        print(f"key callback error tg={c.from_user.id}: {type(e).__name__}: {e}", flush=True)\n        await c.message.answer(\n            "⚠️ Не удалось сформировать подписку. Попробуй ещё раз через несколько секунд.",\n            reply_markup=menu(),\n        )\n\n\n'''
+new_key = '''@dp.callback_query(F.data == "key")\nasync def key(c: CallbackQuery):\n''' + rate_line + '''    await c.answer("Готовлю подписку…")\n    try:\n        ensure_user(c.from_user)\n        row = get_user(c.from_user.id)\n        if not is_active(row):\n            await c.message.answer(\n                "🔴 Доступ сейчас не активен. Активируй тест или продли подписку.",\n                reply_markup=menu(),\n            )\n            return\n        url = subscription_url(row)\n        if not url or not url.startswith("https://"):\n            raise RuntimeError("secure subscription URL is not configured")\n        await c.message.answer(\n            "🔑 <b>FERIXDI CONNECT</b>\\n\\n"\n            "В подписке сразу <b>8 профилей Ferixdi</b>.\\n\\n"\n            "1. Нажми <b>«📋 Скопировать подписку»</b>.\\n"\n            "2. Открой Happ и нажми <b>+</b>.\\n"\n            "3. Выбери <b>«URL подписки»</b>.\\n"\n            "4. Вставь ссылку и сохрани.\\n\\n"\n            "В Happ подписка будет называться <b>FERIXDI CONNECT</b>.",\n            parse_mode="HTML",\n            reply_markup=subscription_copy_keyboard(url),\n        )\n    except Exception as e:\n        print(f"key callback error tg={c.from_user.id}: {type(e).__name__}: {e}", flush=True)\n        await c.message.answer(\n            "⚠️ Не удалось сформировать подписку. Попробуй ещё раз через несколько секунд.",\n            reply_markup=menu(),\n        )\n\n\n'''
 s = s[:key_start] + new_key + s[status_start:]
 
 help_start = s.find('@dp.callback_query(F.data == "help")')
@@ -59,7 +63,7 @@ rate_line = ''
 m = re.search(r'async def help_cb\(c: CallbackQuery\):\n(    if await reject_callback_flood\([^\n]+\):\n        return\n)?', old_help)
 if m and m.group(1):
     rate_line = m.group(1)
-new_help = '''@dp.callback_query(F.data == "help")\nasync def help_cb(c: CallbackQuery):\n''' + rate_line + '''    await c.answer()\n    await c.message.answer(\n        "📱 <b>Как добавить Ferixdi в Happ</b>\\n\\n"\n        "① Нажми <b>«🔑 Мой ключ»</b>.\\n"\n        "② Нажми <b>«📋 Скопировать подписку»</b>.\\n"\n        "③ В Happ нажми <b>+</b> справа сверху.\\n"\n        "④ Выбери <b>«URL подписки»</b>.\\n"\n        "⑤ Вставь ссылку и сохрани.\\n\\n"\n        "После этого появятся сразу <b>8 профилей Ferixdi</b>.",\n        parse_mode="HTML",\n        reply_markup=happ_keyboard(),\n    )\n\n\n'''
+new_help = '''@dp.callback_query(F.data == "help")\nasync def help_cb(c: CallbackQuery):\n''' + rate_line + '''    await c.answer()\n    await c.message.answer(\n        "📱 <b>Как добавить FERIXDI CONNECT в Happ</b>\\n\\n"\n        "① Нажми <b>«🔑 Мой ключ»</b>.\\n"\n        "② Нажми <b>«📋 Скопировать подписку»</b>.\\n"\n        "③ В Happ нажми <b>+</b> справа сверху.\\n"\n        "④ Выбери <b>«URL подписки»</b>.\\n"\n        "⑤ Вставь ссылку и сохрани.\\n\\n"\n        "После этого появится подписка <b>FERIXDI CONNECT</b> с 8 профилями.",\n        parse_mode="HTML",\n        reply_markup=happ_keyboard(),\n    )\n\n\n'''
 s = s[:help_start] + new_help + s[next_start:]
 
 path.write_text(s)
