@@ -7,6 +7,8 @@ on:
     paths:
       - 'bot/**'
       - 'scripts/install-bot.sh'
+      - 'scripts/setup-subscription-https.sh'
+      - 'scripts/patch-bot-http-port.py'
       - 'scripts/patch-bot-runtime.py'
       - 'scripts/patch-bot-hardening.py'
       - 'scripts/patch-bot-profile-clean.py'
@@ -111,9 +113,15 @@ jobs:
           grep -q 'async def pay_approve' /opt/ferixdi/bot/main.py
           grep -q 'CopyTextButton' /opt/ferixdi/bot/main.py
           grep -q 'callback_data="admin_payments"' /opt/ferixdi/bot/main.py
-          grep -q 'compact_key_for_copy' /opt/ferixdi/bot/main.py
-          grep -q 'Вставить из буфера обмена' /opt/ferixdi/bot/main.py
-          echo 'TRIAL + ADMIN + PAYMENT + HAPP COPY OK'
+          grep -q 'subscription_copy_keyboard' /opt/ferixdi/bot/main.py
+          grep -q 'URL подписки' /opt/ferixdi/bot/main.py
+          echo 'TRIAL + ADMIN + PAYMENT + HTTPS HAPP SUBSCRIPTION OK'
+
+          PUBLIC_HOST="$(sudo awk -F= '$1=="PUBLIC_HOST" {print $2; exit}' /opt/ferixdi/.env)"
+          PUBLIC_IP="$(sudo awk -F= '$1=="IP" {print $2; exit}' /root/FERIXDI-NODE-INFO.txt)"
+          test -n "$PUBLIC_HOST" && test -n "$PUBLIC_IP"
+          curl --resolve "${PUBLIC_HOST}:8080:${PUBLIC_IP}" -fsS "https://${PUBLIC_HOST}:8080/health" | grep -q '"ok": true'
+          echo "PUBLIC HTTPS OK: https://${PUBLIC_HOST}:8080"
 
           sudo python3 -m json.tool /opt/ferixdi/node/xray-config.json >/dev/null
           sudo python3 - <<'PY'
