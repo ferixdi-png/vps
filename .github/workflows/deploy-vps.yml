@@ -72,9 +72,6 @@ jobs:
           set -e
           sudo rm -f /run/ferixdi-deploying
           sudo docker ps --format '{{.Names}} {{.Status}}' | grep ferixdi-xray
-          echo '--- Xray container network ---'
-          sudo docker inspect -f 'NetworkMode={{.HostConfig.NetworkMode}}' ferixdi-xray
-          sudo docker inspect -f 'PortBindings={{json .HostConfig.PortBindings}}' ferixdi-xray
           sudo systemctl is-enabled --quiet ferixdi-bot
           sudo systemctl is-enabled --quiet ferixdi-healthcheck.timer
           sudo systemctl is-active --quiet ferixdi-healthcheck.timer
@@ -87,79 +84,55 @@ jobs:
             fi
             sleep 2
             if [ "$i" = 20 ]; then
-              echo 'Health check failed. Diagnostics:'
               sudo systemctl --no-pager --full status ferixdi-bot || true
               sudo journalctl -u ferixdi-bot --no-pager -n 120 || true
-              sudo ss -lntp | grep -E ':(8080|443|8443|9443|10443|11443|12443|13443|14443|15443|16443|17443|18443)\b' || true
+              sudo ss -lntp | grep -E ':(8080|443|8443|12443|13443|17443)\b' || true
               exit 1
             fi
           done
 
           sudo python3 -m json.tool /opt/ferixdi/node/xray-config.json >/dev/null
-
-          echo '--- node metadata audit (values redacted) ---'
-          if sudo test -s /root/FERIXDI-NODE-INFO.txt; then
-            sudo sed -E 's/=.*/=<set>/' /root/FERIXDI-NODE-INFO.txt || true
-          else
-            echo 'NODE_INFO missing or empty'
-          fi
           sudo python3 - <<'PY'
           import json
-          p='/opt/ferixdi/node/xray-config.json'
-          cfg=json.load(open(p))
-          usable=[]
-          for i, inbound in enumerate(cfg.get('inbounds', []), 1):
+          cfg=json.load(open('/opt/ferixdi/node/xray-config.json'))
+          expected={443,8443,12443,13443,17443}
+          usable={}
+          for inbound in cfg.get('inbounds', []):
               s=inbound.get('streamSettings', {})
               r=s.get('realitySettings', {})
-              port=inbound.get('port')
-              print(f"INBOUND {i}: port={port} network={s.get('network')} reality={bool(r)} privateKey={bool(r.get('privateKey'))} shortIds={len(r.get('shortIds') or [])} serverNames={len(r.get('serverNames') or [])}")
-              if inbound.get('protocol','vless') == 'vless' and port and r:
-                  usable.append(int(port))
-          assert len(set(usable)) >= 10, f'expected at least 10 distinct Reality ports, got {sorted(set(usable))}'
-          print(f'XRAY DISTINCT ENDPOINTS OK: {len(set(usable))}')
+              p=inbound.get('port')
+              if inbound.get('protocol','vless') == 'vless' and p and r:
+                  usable[int(p)] = len(r.get('shortIds') or [])
+          assert set(usable) == expected, f'unexpected live Reality ports: {usable}'
+          assert all(v >= 2 for v in usable.values()), f'each reachable port needs two shortIds: {usable}'
+          print(f'XRAY REACHABLE ENDPOINTS OK: ports={sorted(usable)} shortIds={usable}')
           PY
 
           set +e
           sudo python3 - <<'PY'
           import base64, sqlite3, urllib.request, urllib.error
-          from urllib.parse import urlsplit
-          db = '/opt/ferixdi/data/bot.db'
-          con = sqlite3.connect(db)
-          check = con.execute('PRAGMA quick_check').fetchone()[0]
-          assert check == 'ok', check
-          total = con.execute('SELECT COUNT(*) FROM users').fetchone()[0]
-          active = con.execute("SELECT COUNT(*) FROM users WHERE enabled=1").fetchone()[0]
+          from urllib.parse import urlsplit, parse_qs
+          con = sqlite3.connect('/opt/ferixdi/data/bot.db')
+          assert con.execute('PRAGMA quick_check').fetchone()[0] == 'ok'
           row = con.execute("SELECT sub_token FROM users WHERE enabled=1 ORDER BY created_at LIMIT 1").fetchone()
-          print(f'DB OK: users={total}, enabled={active}')
           if row:
-              token = row[0]
-              try:
-                  raw = urllib.request.urlopen(f'http://127.0.0.1:8080/sub/{token}', timeout=5).read()
-              except urllib.error.HTTPError as e:
-                  print(f'SUBSCRIPTION HTTP ERROR: {e.code} {e.read().decode(errors="replace")}')
-                  raise
+              raw = urllib.request.urlopen(f'http://127.0.0.1:8080/sub/{row[0]}', timeout=5).read()
               decoded = base64.b64decode(raw, validate=True).decode()
               profiles = [x for x in decoded.splitlines() if x.startswith('vless://')]
               ports = {urlsplit(x).port for x in profiles}
-              assert len(profiles) >= 10, f'expected >=10 VLESS profiles, got {len(profiles)}'
-              assert len(ports) >= 10, f'expected >=10 distinct profile ports, got {sorted(ports)}'
-              print(f'SUBSCRIPTION OK: profiles={len(profiles)} distinct_ports={len(ports)}')
-          else:
-              print('SUBSCRIPTION TEST SKIPPED: no enabled user')
+              sids = [parse_qs(urlsplit(x).query).get('sid',[''])[0] for x in profiles]
+              assert len(profiles) == 10, f'expected 10 reachable VLESS profiles, got {len(profiles)}'
+              assert ports == {443,8443,12443,13443,17443}, f'unexpected subscription ports: {sorted(ports)}'
+              assert len(set((urlsplit(x).port, sid) for x, sid in zip(profiles, sids))) == 10, 'profiles are not unique'
+              print(f'SUBSCRIPTION OK: profiles={len(profiles)} reachable_ports={len(ports)}')
           PY
           audit_rc=$?
           set -e
 
-          echo '--- deep self-healing check ---'
           sudo /usr/local/sbin/ferixdi-healthcheck
-
-          echo '--- network tuning ---'
           sysctl net.core.default_qdisc net.ipv4.tcp_congestion_control net.ipv4.tcp_mtu_probing net.ipv4.tcp_fastopen || true
-
-          echo '--- recent bot errors/warnings ---'
           sudo journalctl -u ferixdi-bot --since '10 minutes ago' --no-pager | grep -Ei 'error|exception|failed|warning|subscription render|key callback' || true
           if [ "$audit_rc" -ne 0 ]; then
-            echo '--- bot journal tail ---'
             sudo journalctl -u ferixdi-bot --no-pager -n 100 || true
             exit "$audit_rc"
           fi
